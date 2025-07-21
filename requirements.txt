@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+pyyaml
+httpx
+python-dotenv
+litellm
+
