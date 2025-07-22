@@ -1,38 +1,71 @@
-import httpx
-from typing import Any, Dict
-from app.config import ModelDeployment  # Updated import
+import logging
+import time
+import google.generativeai as genai
+from typing import Any, Dict, Optional
+from openai import AsyncOpenAI
+from app.config import ModelDeployment
 
 
 class LLMClient:
-    async def make_request(
-        self, deployment: ModelDeployment, payload: Dict[str, Any]
-    ) -> httpx.Response:
-        """Send request to the LLM deployment endpoint"""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                deployment.endpoint_url,  # Now using attribute from ModelDeployment
-                json=payload,
-                headers=deployment.headers,
-                timeout=30.0,
+    def __init__(self, deployment: ModelDeployment):
+        self.model_name = deployment.litellm_params.model
+        
+        # Handle Gemini models specially
+        if "gemini" in self.model_name.lower():
+            genai.configure(api_key=deployment.litellm_params.api_key)
+            # Extract base model name without any prefixes
+            base_model = self.model_name.split("/")[-1].split(":")[0]
+            # Remove "models/" prefix if present
+            if base_model.startswith("models/"):
+                base_model = base_model[len("models/"):]
+            self.client = genai.GenerativeModel(base_model)
+        else:
+            self.client = AsyncOpenAI(
+                base_url=deployment.litellm_params.api_base,
+                api_key=deployment.litellm_params.api_key,
             )
-            response.raise_for_status()
-            return response
 
-    def adapt_gemini_response(
-        self, response_json: Dict[str, Any], model_name: str
-    ) -> Dict[str, Any]:
-        """Adapt Gemini responses to OpenAI format"""
-        # Basic adaptation - needs improvement based on actual Gemini response format
-        if "candidates" in response_json:
-            return {
-                "choices": [
-                    {
+    async def make_request(self, payload: Dict[str, Any]) -> Any:
+        """Send request to the LLM deployment endpoint"""
+        logging.info(f"Making request to {self.model_name} with payload: {payload}")
+        try:
+            if "gemini" in payload["model"].lower():
+                # Convert messages to Gemini format
+                messages = []
+                for msg in payload["messages"]:
+                    role = "user" if msg["role"] == "user" else "model"
+                    messages.append({
+                        "role": role,
+                        "parts": [{"text": msg["content"]}]
+                    })
+                
+                # Create chat history and send message
+                chat = self.client.start_chat(history=messages[:-1])
+                response = await chat.send_message_async(messages[-1]["parts"][0]["text"])
+                
+                # Format response to match OpenAI format
+                return {
+                    "id": f"chatcmpl-{time.time()}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": self.model_name,
+                    "choices": [{
+                        "index": 0,
                         "message": {
                             "role": "assistant",
-                            "content": candidate["content"]["parts"][0]["text"],
-                        }
+                            "content": response.text,
+                        },
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0
                     }
-                    for candidate in response_json["candidates"]
-                ]
-            }
-        return response_json
+                }
+            else:
+                # Use existing OpenAI client for non-Gemini models
+                return await self.client.chat.completions.create(**payload)
+        except Exception as e:
+            logging.error(f"Error making request to {self.model_name}: {e}")
+            raise

@@ -31,11 +31,6 @@ class ModelDeployment(BaseModel):
     litellm_params: LiteLLMParams
     # Уникальный ID для отслеживания состояния
     deployment_id: str = Field(..., alias="id")
-    # URL конечной точки API
-    endpoint_url: str
-    # Заголовки для запросов
-    headers: Dict[str, str]
-
 
 class ProxyServerConfig(BaseModel):
     port: int = 4000
@@ -65,6 +60,17 @@ def load_config(path: str) -> AppConfig:
 
         for model_def in raw_config.get("model_list", []):
             params = model_def.get("litellm_params", {})
+
+            # Generate unique ID
+            model_id = model_def["model_name"] # + "/" + params["api_key"][-4:]
+            model_def["id"] = model_id
+
+            if params.get("api_base") is None and params["model"].startswith("gemini/"):
+                # Use the correct Gemini endpoint
+                params["api_base"] = "https://generativelanguage.googleapis.com/v1beta/models/"
+                params["model"] = params["model"].split("/")[1]
+            else:
+                params["model"] = "/".join(params["model"].split("/")[1:])
             key_str = params.get("api_key", "")
             if key_str.startswith("os.environ/"):
                 env_var = key_str.split("/")[-1]
@@ -81,17 +87,6 @@ def load_config(path: str) -> AppConfig:
                 )
                 continue
 
-            # Generate unique ID
-            model_id = model_def["model_name"] # + "/" + params["api_key"][-4:]
-            model_def["id"] = model_id
-            model_def["model_name"] = "/".join(params["model"].split("/")[-2:])
-
-            # Set endpoint_url and headers
-            model_def["endpoint_url"] = params.get("api_base", "")
-            model_def["headers"] = {
-                "Authorization": f"Bearer {params['api_key']}",
-                "Content-Type": "application/json",
-            }
             valid_models.append(model_def)
 
         raw_config["model_list"] = valid_models

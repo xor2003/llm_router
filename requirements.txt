@@ -6,4 +6,5 @@ pyyaml
 httpx
 python-dotenv
 litellm
-
+openai
+google-generativeai

@@ -17,7 +17,9 @@ class ModelStateManager:
         logging.info("Менеджер состояния инициализирован.")
 
     def _initialize_state(self):
+        logging.info(f"Initializing state for {len(self._deployments)} deployments.")
         for dep_id, deployment in self._deployments.items():
+            logging.info(f"Initializing state for deployment: {deployment.deployment_id}")
             self._state[dep_id] = {
                 "last_used": 0.0,
                 "is_on_cooldown": False,
@@ -27,25 +29,49 @@ class ModelStateManager:
     def is_available(self, deployment_id: str) -> bool:
         """Проверяет, доступна ли модель с учетом лимитов."""
         with self._lock:
+            logging.info(f"Checking availability for deployment: {deployment_id}")
             deployment = self._deployments.get(deployment_id)
             if not deployment:
+                logging.warning(f"Deployment {deployment_id} not found in deployments list")
                 return False
 
             state = self._state[deployment_id]
             current_time = time.time()
+            logging.info(f"Current state: {state}")
 
             # Проверка общего кулдауна (например, после ошибки 429)
-            if state["is_on_cooldown"] and current_time < state["cooldown_until"]:
-                return False
-            elif state["is_on_cooldown"]:  # Если время вышло, снимаем кулдаун
-                state["is_on_cooldown"] = False
+            if state["is_on_cooldown"]:
+                if current_time < state["cooldown_until"]:
+                    logging.info(
+                        f"Model {deployment_id} is on cooldown until {state['cooldown_until']} "
+                        f"(current time: {current_time})"
+                    )
+                    return False
+                else:
+                    logging.info(
+                        f"Cooldown expired for {deployment_id}. Resetting cooldown flag."
+                    )
+                    state["is_on_cooldown"] = False
 
             # Проверка RPM
             if deployment.litellm_params.rpm:
                 cooldown_duration = 60.0 / deployment.litellm_params.rpm
-                if current_time - state["last_used"] < cooldown_duration:
+                time_since_last_use = current_time - state["last_used"]
+                logging.info(
+                    f"RPM check: {deployment.litellm_params.rpm} RPM "
+                    f"-> min interval: {cooldown_duration:.2f}s, "
+                    f"time since last use: {time_since_last_use:.2f}s"
+                )
+                
+                if time_since_last_use < cooldown_duration:
+                    logging.info(
+                        f"Model {deployment_id} is rate limited. "
+                        f"Time since last use: {time_since_last_use:.2f} sec, "
+                        f"required cooldown: {cooldown_duration:.2f} sec"
+                    )
                     return False
 
+            logging.info(f"Model {deployment_id} is available")
             return True
 
     def record_success(self, deployment_id: str):

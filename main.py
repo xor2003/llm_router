@@ -10,12 +10,12 @@ sys.path.insert(0, current_dir)
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
-
+from typing import Dict
 from app.client import LLMClient
 from app.config import AppConfig
-from app.dependencies import get_config, get_llm_client, get_router, get_state_manager
+from app.dependencies import get_config, get_client_map, get_router, get_state_manager
 from app.router import LLMRouter
 from app.state import ModelStateManager
 
@@ -31,54 +31,59 @@ app = FastAPI(title="LLM Proxy Server")
 async def chat_completions(
     request: Request,
     router: LLMRouter = Depends(get_router),
-    client: LLMClient = Depends(get_llm_client),
+    client_map: Dict[str, LLMClient] = Depends(get_client_map),
     state_manager: ModelStateManager = Depends(get_state_manager),
 ):
     """Эндпоинт, проксирующий запросы к LLM в формате OpenAI."""
-    response = ""
     try:
         payload = await request.json()
         model_group = payload.get("model")
-        
-        # Log full incoming request
+        stream = payload.get("stream", False)
+
         logging.info(f"Incoming request for model group '{model_group}': {payload}")
 
         if not model_group:
             raise HTTPException(status_code=400, detail="Параметр 'model' обязателен.")
 
-        # 1. Выбрать доступную модель
         deployment = router.get_next_deployment(model_group)
         if not deployment:
             raise HTTPException(
                 status_code=503,
                 detail="Все модели в группе перегружены или недоступны.",
             )
-        
-        # Log selected deployment details
-        logging.info(f"Selected deployment: {deployment.deployment_id} "
-                     f"(model: {deployment.litellm_params.model}, "
-                     f"endpoint: {deployment.endpoint_url})")
 
-        # 2. Отправить запрос
+        logging.info(
+            f"Selected deployment: {deployment.deployment_id} "
+            f"(model: {deployment.litellm_params.model})"
+        )
+
         try:
-            payload["model"] = deployment.model_name
-            response = await client.make_request(deployment, payload)
+            payload["model"] = deployment.litellm_params.model
+            client = client_map[deployment.deployment_id]
+            # The make_request function now correctly returns an awaitable object
+            # for both streaming and non-streaming responses.
+            async_response = await client.make_request(payload)
             state_manager.record_success(deployment.deployment_id)
 
-            # 3. Адаптировать ответ, если нужно
-            response_json = response.json()
-            if deployment.litellm_params.model.startswith("gemini/"):
-                response_json = client.adapt_gemini_response(
-                    response_json, deployment.litellm_params.model
-                )
-            
-            # Log full outgoing response
-            logging.info(f"Outgoing response for {deployment.deployment_id}: {response_json}")
-            
-            return JSONResponse(content=response_json, status_code=response.status_code)
+            if stream:
+                # The response is an AsyncStream, which can be iterated over directly.
+                async def stream_generator():
+                    try:
+                        async for chunk in async_response:
+                            yield f"data: {chunk.model_dump_json()}\n\n"
+                    except Exception as e:
+                        logging.error(f"Error during streaming for {deployment.deployment_id}: {e}")
+                    finally:
+                        logging.info(f"Stream closed for {deployment.deployment_id}")
+
+                return StreamingResponse(stream_generator(), media_type="text/event-stream")
+            else:
+                # The response is a ChatCompletion object.
+                response_json = async_response.model_dump()
+                logging.info(f"Outgoing response for {deployment.deployment_id}: {response_json}")
+                return JSONResponse(content=response_json)
 
         except HTTPStatusError as e:
-            # Обработка ошибок от нижестоящих API
             state_manager.record_failure(
                 deployment.deployment_id, e.response.status_code
             )
@@ -90,7 +95,7 @@ async def chat_completions(
             )
 
     except Exception as e:
-        logging.exception("Произошла внутренняя ошибка сервера. %s", str(response))
+        logging.exception("Произошла внутренняя ошибка сервера.")
         raise HTTPException(status_code=500, detail=str(e))
 
 
