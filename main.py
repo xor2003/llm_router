@@ -97,11 +97,19 @@ async def chat_completions(
                 status_code = e.response.status_code
                 state_manager.record_failure(deployment.deployment_id, status_code)
                 last_error = e
-                logging.warning(
-                    f"Request failed with status {status_code} on deployment {deployment.deployment_id}. "
-                    f"Error: {e.response.text}"
-                )
-                # For 429 errors, try next model immediately
+                
+                if status_code == 429:
+                    # Set cooldown for rate limit errors
+                    state_manager.set_cooldown(deployment.deployment_id, 60)
+                    logging.warning(
+                        f"Rate limit hit for {deployment.deployment_id}, setting cooldown"
+                    )
+                else:
+                    logging.warning(
+                        f"Request failed with status {status_code} on deployment {deployment.deployment_id}. "
+                        f"Error: {e.response.text}"
+                    )
+                
                 retry_count += 1
                 continue
 

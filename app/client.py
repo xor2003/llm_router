@@ -26,7 +26,18 @@ class LLMClient:
 
     async def make_request(self, payload: Dict[str, Any]) -> Any:
         """Send request to the LLM deployment endpoint with error forwarding"""
-        logging.info(f"Making request to {self.model_name}")
+        logging.info(f"=== REQUEST START ===")
+        logging.info(f"Model: {self.model_name}")
+        logging.info(f"Gemini: {self.gemini}")
+        logging.info(f"Payload keys: {list(payload.keys())}")
+        logging.info(f"Messages count: {len(payload.get('messages', []))}")
+        
+        # Log first message content for debugging
+        if payload.get('messages'):
+            first_msg = payload['messages'][0]
+            logging.info(f"First message role: {first_msg.get('role')}")
+            logging.info(f"First message content preview: {str(first_msg.get('content', ''))[:100]}...")
+        
         try:
             if self.gemini:
                 # Convert messages to Gemini format
