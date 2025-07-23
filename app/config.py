@@ -7,16 +7,6 @@ from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings
 
 
-# Загрузка .env файла
-class Settings(BaseSettings):
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-
-
-settings = Settings()
-
-
 # Модели Pydantic для структуры config.yaml
 class LiteLLMParams(BaseModel):
     model: str
@@ -48,6 +38,19 @@ class AppConfig(BaseModel):
     router_settings: RouterSettings
 
 
+# Загрузка .env файла
+class EnvSettings(BaseSettings):
+    GEMINI_API_KEY: str
+    OPENROUTER_KEY1: str
+    OPENROUTER_KEY2: str
+    OPENROUTER_KEY3: str
+
+    class Config:
+        env_file = ".env"
+        extra = "ignore"
+
+env_settings = EnvSettings()
+
 def load_config(path: str) -> AppConfig:
     """Загружает, парсит и валидирует конфигурацию из YAML файла."""
     logging.info(f"Загрузка конфигурации из {path}...")
@@ -74,7 +77,8 @@ def load_config(path: str) -> AppConfig:
             key_str = params.get("api_key", "")
             if key_str.startswith("os.environ/"):
                 env_var = key_str.split("/")[-1]
-                params["api_key"] = os.getenv(env_var)
+                # Use the env_settings object instead of os.getenv
+                params["api_key"] = getattr(env_settings, env_var, None)
                 if not params["api_key"]:
                     logging.error(
                         f"Переменная окружения {env_var} не найдена. Пропускаем модель."

@@ -15,21 +15,22 @@ class LLMClient:
             genai.configure(api_key=deployment.litellm_params.api_key)
             # Extract base model name without any prefixes
             base_model = self.model_name.split("/")[-1].split(":")[0]
-            # Remove "models/" prefix if present
-            if base_model.startswith("models/"):
-                base_model = base_model[len("models/"):]
+
             self.client = genai.GenerativeModel(base_model)
+            self.gemini = True
         else:
             self.client = AsyncOpenAI(
                 base_url=deployment.litellm_params.api_base,
                 api_key=deployment.litellm_params.api_key,
             )
+            self.gemini = False
 
     async def make_request(self, payload: Dict[str, Any]) -> Any:
         """Send request to the LLM deployment endpoint"""
-        logging.info(f"Making request to {self.model_name} with payload: {payload}")
+        logging.info(f"Making request to {self.model_name}")
+        logging.debug(f"Making request to {self.model_name} with payload: {payload}")
         try:
-            if "gemini" in payload["model"].lower():
+            if self.gemini:
                 # Convert messages to Gemini format
                 messages = []
                 for msg in payload["messages"]:

@@ -40,7 +40,7 @@ async def chat_completions(
         model_group = payload.get("model")
         stream = payload.get("stream", False)
 
-        logging.info(f"Incoming request for model group '{model_group}': {payload}")
+        logging.debug(f"Incoming request for model group '{model_group}': {payload}")
 
         if not model_group:
             raise HTTPException(status_code=400, detail="Параметр 'model' обязателен.")
@@ -80,7 +80,7 @@ async def chat_completions(
             else:
                 # The response is a ChatCompletion object.
                 response_json = async_response.model_dump()
-                logging.info(f"Outgoing response for {deployment.deployment_id}: {response_json}")
+                logging.info(f"Outgoing response for {deployment.litellm_params.model}: {response_json}")
                 return JSONResponse(content=response_json)
 
         except HTTPStatusError as e:
@@ -88,7 +88,7 @@ async def chat_completions(
                 deployment.deployment_id, e.response.status_code
             )
             logging.error(
-                f"Ошибка от API {deployment.deployment_id}: {e.response.status_code} - {e.response.text}"
+                f"Ошибка от API {deployment.litellm_params.model}: {e.response.status_code} - {e.response.text}"
             )
             raise HTTPException(
                 status_code=e.response.status_code, detail=e.response.json()
