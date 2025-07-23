@@ -1,6 +1,5 @@
 import logging
-import os
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -11,16 +10,19 @@ from pydantic_settings import BaseSettings
 class LiteLLMParams(BaseModel):
     model: str
     api_key: str
-    api_base: Optional[str] = None
-    rpm: Optional[int] = None
+    api_base: str | None = None
+    rpm: int | None = None
     # Добавьте другие параметры litellm по необходимости
 
 
-class ModelDeployment(BaseModel):
-    model_name: str  # Имя группы/маршрута, например "my-router"
+class BackendModel(BaseModel):
+    """Represents a single backend model provider"""
+
+    model_name: str  # Router group name, e.g., "gateway-model"
     litellm_params: LiteLLMParams
-    # Уникальный ID для отслеживания состояния
-    deployment_id: str = Field(..., alias="id")
+    # Unique ID for state tracking
+    backend_model_id: str = Field(..., alias="id")
+
 
 class ProxyServerConfig(BaseModel):
     port: int = 4000
@@ -34,7 +36,7 @@ class RouterSettings(BaseModel):
 
 class AppConfig(BaseModel):
     proxy_server_config: ProxyServerConfig
-    model_list: List[ModelDeployment]
+    model_list: list[BackendModel]
     router_settings: RouterSettings
 
 
@@ -49,13 +51,15 @@ class EnvSettings(BaseSettings):
         env_file = ".env"
         extra = "ignore"
 
+
 env_settings = EnvSettings()
+
 
 def load_config(path: str) -> AppConfig:
     """Загружает, парсит и валидирует конфигурацию из YAML файла."""
     logging.info(f"Загрузка конфигурации из {path}...")
     try:
-        with open(path, "r") as f:
+        with open(path) as f:
             raw_config = yaml.safe_load(f)
 
         # Парсинг переменных окружения
@@ -65,12 +69,14 @@ def load_config(path: str) -> AppConfig:
             params = model_def.get("litellm_params", {})
 
             # Generate unique ID
-            model_id = model_def["model_name"] # + "/" + params["api_key"][-4:]
+            model_id = model_def["model_name"]  # + "/" + params["api_key"][-4:]
             model_def["id"] = model_id
 
             if params.get("api_base") is None and params["model"].startswith("gemini/"):
                 # Use the correct Gemini endpoint
-                params["api_base"] = "https://generativelanguage.googleapis.com/v1beta/models/"
+                params["api_base"] = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                )
                 params["model"] = params["model"].split("/")[1]
             else:
                 params["model"] = "/".join(params["model"].split("/")[1:])
@@ -81,13 +87,13 @@ def load_config(path: str) -> AppConfig:
                 params["api_key"] = getattr(env_settings, env_var, None)
                 if not params["api_key"]:
                     logging.error(
-                        f"Переменная окружения {env_var} не найдена. Пропускаем модель."
+                        f"Переменная окружения {env_var} не найдена. Пропускаем модель.",
                     )
                     continue
 
             if not params.get("api_key"):
                 logging.warning(
-                    f"API ключ для модели {params.get('model', 'unknown')} отсутствует. Пропускаем."
+                    f"API ключ для модели {params.get('model', 'unknown')} отсутствует. Пропускаем.",
                 )
                 continue
 
@@ -104,5 +110,5 @@ def load_config(path: str) -> AppConfig:
 
         return AppConfig.parse_obj(raw_config)
     except (FileNotFoundError, ValidationError, TypeError) as e:
-        logging.error(f"Ошибка загрузки или валидации конфигурации: {e}")
+        logging.exception(f"Ошибка загрузки или валидации конфигурации: {e}")
         raise

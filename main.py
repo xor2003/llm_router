@@ -2,6 +2,7 @@
 import sys
 import os
 import logging
+import time
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,7 +13,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
 from typing import Dict
-from app.client import LLMClient
+from app.client import LLMClient, RateLimitException
 from app.config import AppConfig
 from app.dependencies import get_config, get_client_map, get_router, get_state_manager
 from app.router import LLMRouter
@@ -57,25 +58,25 @@ async def chat_completions(
         last_error = None
         
         while retry_count < max_retries:
-            deployment = router.get_next_deployment(model_group)
-            if not deployment:
+            backend_model = router.get_next_backend_model(model_group)
+            if not backend_model:
                 raise HTTPException(
                     status_code=503,
                     detail="All models in group are overloaded or unavailable",
                 )
 
             logging.info(
-                f"Attempt {retry_count+1}/{max_retries}: Using deployment {deployment.deployment_id} "
-                f"(model: {deployment.litellm_params.model})"
+                f"Attempt {retry_count+1}/{max_retries}: Using backend model {backend_model.backend_model_id} "
+                f"(model: {backend_model.litellm_params.model})"
             )
 
             try:
                 # Make a copy of payload to avoid mutating original
                 payload_copy = payload.copy()
-                payload_copy["model"] = deployment.litellm_params.model
-                client = client_map[deployment.deployment_id]
+                payload_copy["model"] = backend_model.litellm_params.model
+                client = client_map[backend_model.backend_model_id]
                 async_response = await client.make_request(payload_copy)
-                state_manager.record_success(deployment.deployment_id)
+                state_manager.record_success(backend_model.backend_model_id)
 
                 if stream:
                     async def stream_generator():
@@ -83,40 +84,53 @@ async def chat_completions(
                             async for chunk in async_response:
                                 yield f"data: {chunk.model_dump_json()}\n\n"
                         except Exception as e:
-                            logging.error(f"Stream error for {deployment.deployment_id}: {e}")
+                            logging.error(f"Stream error for {backend_model.backend_model_id}: {e}")
                         finally:
-                            logging.info(f"Stream closed for {deployment.deployment_id}")
+                            logging.info(f"Stream closed for {backend_model.backend_model_id}")
 
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
                     response_json = async_response.model_dump()
-                    logging.info(f"Response for {deployment.litellm_params.model}: {response_json}")
+                    logging.info(f"Response for {backend_model.litellm_params.model}: {response_json}")
                     return JSONResponse(content=response_json)
 
             except HTTPStatusError as e:
                 status_code = e.response.status_code
-                state_manager.record_failure(deployment.deployment_id, status_code)
+                state_manager.record_failure(backend_model.backend_model_id, status_code)
                 last_error = e
                 
                 if status_code == 429:
-                    # Set cooldown for rate limit errors
-                    state_manager.set_cooldown(deployment.deployment_id, 60)
+                    # Extract reset time from headers
+                    headers = e.response.headers
+                    reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
+                    
+                    # Handle milliseconds format
+                    if reset_time > 1e10:  # Likely in milliseconds
+                        reset_time = reset_time / 1000.0
+                    
+                    # Set precise cooldown
+                    state_manager.set_cooldown(backend_model.backend_model_id, reset_time)
                     logging.warning(
-                        f"Rate limit hit for {deployment.deployment_id}, setting cooldown"
+                        f"Rate limit hit for {backend_model.backend_model_id}, "
+                        f"cooldown until {time.ctime(reset_time)}"
                     )
                 else:
                     logging.warning(
-                        f"Request failed with status {status_code} on deployment {deployment.deployment_id}. "
+                        f"Request failed with status {status_code} on backend model {backend_model.backend_model_id}. "
                         f"Error: {e.response.text}"
                     )
                 
                 retry_count += 1
                 continue
-
-            except Exception as e:
-                state_manager.record_failure(deployment.deployment_id, 500)
+                
+            except RateLimitException as e:
+                # Set precise cooldown from exception
+                state_manager.set_cooldown(backend_model.backend_model_id, e.reset_time)
+                logging.warning(
+                    f"Rate limit error for {backend_model.backend_model_id}, "
+                    f"cooldown until {time.ctime(e.reset_time)}"
+                )
                 last_error = e
-                logging.exception(f"Unexpected error on deployment {deployment.deployment_id}")
                 retry_count += 1
                 continue
 

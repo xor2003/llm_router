@@ -1,7 +1,7 @@
 from functools import lru_cache
-from typing import Dict
+
 from app.client import LLMClient
-from app.config import AppConfig, load_config, ModelDeployment
+from app.config import AppConfig, BackendModel, load_config
 from app.router import LLMRouter
 from app.state import ModelStateManager
 
@@ -12,17 +12,17 @@ def get_config() -> AppConfig:
     return load_config("config.yaml")
 
 
-#@lru_cache(maxsize=None)
-def get_llm_client(deployment: ModelDeployment) -> LLMClient:
+# @lru_cache(maxsize=None)
+def get_llm_client(backend_model: BackendModel) -> LLMClient:
     """Зависимость для получения HTTP клиента."""
-    return LLMClient(deployment)
+    return LLMClient(backend_model)
 
 
 @lru_cache(maxsize=1)
 def get_state_manager() -> ModelStateManager:
     """Зависимость для получения менеджера состояний."""
     config = get_config()
-    # Инициализируем с deployment_id из конфигурации
+    # Инициализируем с backend_model_id из конфигурации
     return ModelStateManager()
 
 
@@ -35,9 +35,6 @@ def get_router() -> LLMRouter:
 
 
 @lru_cache(maxsize=1)
-def get_client_map() -> Dict[str, LLMClient]:
+def get_client_map() -> dict[str, LLMClient]:
     config = get_config()
-    return {
-        dep.deployment_id: get_llm_client(dep)
-        for dep in config.model_list
-    }
+    return {model.backend_model_id: get_llm_client(model) for model in config.model_list}

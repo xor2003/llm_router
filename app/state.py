@@ -1,71 +1,79 @@
-import time
 import logging
-from typing import Dict, Optional
+import time
+
 
 class ModelState:
-    """Tracks state for a single model deployment."""
+    """Tracks state for a single model backend_model."""
+
     def __init__(self):
         self.last_used: float = 0.0
         self.is_on_cooldown: bool = False
         self.cooldown_until: float = 0.0
         self.failure_count: int = 0
 
+
 class ModelStateManager:
-    """Manages state for all model deployments."""
+    """Manages state for all model backend_models."""
+
     def __init__(self):
-        self.states: Dict[str, ModelState] = {}
+        self.states: dict[str, ModelState] = {}
         self.logger = logging.getLogger(__name__)
 
-    def _get_state(self, deployment_id: str) -> ModelState:
-        """Get or create state for a deployment."""
-        if deployment_id not in self.states:
-            self.states[deployment_id] = ModelState()
-        return self.states[deployment_id]
+    def _get_state(self, backend_model_id: str) -> ModelState:
+        """Get or create state for a backend_model."""
+        if backend_model_id not in self.states:
+            self.states[backend_model_id] = ModelState()
+        return self.states[backend_model_id]
 
-    def is_available(self, deployment_id: str) -> bool:
-        """Check if a deployment is available for use."""
-        state = self._get_state(deployment_id)
+    def is_available(self, backend_model_id: str) -> bool:
+        """Check if a backend model is available for use."""
+        state = self._get_state(backend_model_id)
         current_time = time.time()
-        
+
         # Check if on cooldown
         if state.is_on_cooldown:
             if current_time >= state.cooldown_until:
                 state.is_on_cooldown = False
-                self.logger.info(f"Cooldown ended for {deployment_id}")
+                self.logger.info(f"Cooldown ended for {backend_model_id}")
             else:
                 # Still on cooldown
                 self.logger.info(
-                    f"Model {deployment_id} on cooldown until {state.cooldown_until}"
+                    f"Model {backend_model_id} on cooldown until {state.cooldown_until}",
                 )
                 return False
-        
+
         # Additional availability checks could be added here
         return True
 
-    def record_success(self, deployment_id: str):
-        """Record a successful request to a deployment."""
-        state = self._get_state(deployment_id)
+    def record_success(self, backend_model_id: str):
+        """Record a successful request to a backend_model."""
+        state = self._get_state(backend_model_id)
         state.last_used = time.time()
         state.failure_count = 0
-        self.logger.info(f"Recorded success for {deployment_id}")
+        self.logger.info(f"Recorded success for {backend_model_id}")
 
-    def record_failure(self, deployment_id: str, status_code: int):
-        """Record a failed request to a deployment."""
-        state = self._get_state(deployment_id)
+    def record_failure(self, backend_model_id: str, status_code: int):
+        """Record a failed request to a backend_model."""
+        state = self._get_state(backend_model_id)
         state.failure_count += 1
         self.logger.warning(
-            f"Recorded failure #{state.failure_count} for {deployment_id} (status: {status_code})"
+            f"Recorded failure #{state.failure_count} for {backend_model_id} (status: {status_code})",
         )
-        
+
         # For rate limit errors, set cooldown
         if status_code == 429:
-            self.set_cooldown(deployment_id, 60)  # Default 60s cooldown
+            self.set_cooldown(backend_model_id, 60)  # Default 60s cooldown
 
-    def set_cooldown(self, deployment_id: str, duration: float):
-        """Set a cooldown period for a deployment."""
-        state = self._get_state(deployment_id)
+    def set_cooldown(self, backend_model_id: str, reset_time: float):
+        """Set cooldown until specified reset time"""
+        state = self._get_state(backend_model_id)
+        current_time = time.time()
+
+        # Calculate duration until reset time
+        duration = max(reset_time - current_time, 1)  # At least 1 second
+
         state.is_on_cooldown = True
-        state.cooldown_until = time.time() + duration
+        state.cooldown_until = reset_time
         self.logger.info(
-            f"Set cooldown for {deployment_id} until {state.cooldown_until}"
+            f"Set cooldown for {backend_model_id} for {duration:.1f}s until {time.ctime(reset_time)}",
         )
