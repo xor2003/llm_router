@@ -28,7 +28,7 @@ class LLMClient:
     async def make_request(self, payload: Dict[str, Any]) -> Any:
         """Send request to the LLM deployment endpoint"""
         logging.info(f"Making request to {self.model_name}")
-        logging.debug(f"Making request to {self.model_name} with payload: {payload}")
+        #logging.info(f"Making request to {self.model_name} with payload: {payload}")
         try:
             if self.gemini:
                 # Convert messages to Gemini format
@@ -66,6 +66,8 @@ class LLMClient:
                 }
             else:
                 # Use existing OpenAI client for non-Gemini models
+                logging.info(f"Making request to {self.model_name} with : {payload["model"]}")
+                payload["model"] = self.model_name
                 return await self.client.chat.completions.create(**payload)
         except Exception as e:
             logging.error(f"Error making request to {self.model_name}: {e}")

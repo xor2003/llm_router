@@ -26,6 +26,14 @@ logging.basicConfig(
 
 app = FastAPI(title="LLM Proxy Server")
 
+@app.get("/v1/models")
+async def list_models(config: AppConfig = Depends(get_config)):
+    """Return the load balancing model names from configuration"""
+    # Extract unique model names from config.model_list
+    model_names = set({model.model_name for model in config.model_list})
+    return {"models": model_names}
+
+
 
 @app.post("/v1/chat/completions")
 async def chat_completions(
@@ -99,7 +107,7 @@ async def chat_completions(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Этот блок теперь будет работать корректно
+
 if __name__ == "__main__":
     config: AppConfig = get_config()
     uvicorn.run(
