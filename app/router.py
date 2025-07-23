@@ -41,11 +41,11 @@ class LLMRouter:
             self._group_counters[group_name] = 0
             logging.info(f"Initialized counter for group: {group_name}")
 
-    def get_next_deployment(self, model_group: str, max_retries: int = 3, retry_delay: float = 0.5) -> Optional[ModelDeployment]:
+    def get_next_deployment(self, model_group: str, max_retries: int = 5, retry_delay: float = 0.1) -> Optional[ModelDeployment]:
         """
         Находит следующее доступное развертывание в группе.
-        Реализует простую ротацию (round-robin).
-        Если модели недоступны, ждет с задержкой и повторяет попытки.
+        Реализует ротацию (round-robin) с учетом rate limits.
+        При обнаружении 429 ошибки сразу переходит к следующей модели.
         """
         deployments_in_group = self._model_groups.get(model_group, [])
         if not deployments_in_group:

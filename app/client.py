@@ -1,10 +1,9 @@
 import logging
 import time
 import google.generativeai as genai
-from typing import Any, Dict, Optional
-from openai import AsyncOpenAI
+from typing import Any, Dict
+from openai import AsyncOpenAI, APIStatusError
 from app.config import ModelDeployment
-
 
 class LLMClient:
     def __init__(self, deployment: ModelDeployment):
@@ -26,9 +25,8 @@ class LLMClient:
             self.gemini = False
 
     async def make_request(self, payload: Dict[str, Any]) -> Any:
-        """Send request to the LLM deployment endpoint"""
+        """Send request to the LLM deployment endpoint with error forwarding"""
         logging.info(f"Making request to {self.model_name}")
-        #logging.info(f"Making request to {self.model_name} with payload: {payload}")
         try:
             if self.gemini:
                 # Convert messages to Gemini format
@@ -66,9 +64,14 @@ class LLMClient:
                 }
             else:
                 # Use existing OpenAI client for non-Gemini models
-                logging.info(f"Making request to {self.model_name} with : {payload["model"]}")
+                logging.info(f"Making request to {self.model_name} with payload")
                 payload["model"] = self.model_name
                 return await self.client.chat.completions.create(**payload)
         except Exception as e:
-            logging.error(f"Error making request to {self.model_name}: {e}")
-            raise
+            # Forward all errors except 429 to the client
+            if isinstance(e, APIStatusError) and e.status_code == 429:
+                logging.warning(f"Rate limit error for {self.model_name}: {e}")
+                raise  # We'll handle 429s in the state manager
+            else:
+                logging.error(f"Forwarding error for {self.model_name}: {e}")
+                raise e  # Forward other errors directly to client

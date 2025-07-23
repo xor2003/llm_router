@@ -1,95 +1,71 @@
-import logging
-import threading
 import time
-from typing import Dict
+import logging
+from typing import Dict, Optional
 
-from .config import ModelDeployment
-
+class ModelState:
+    """Tracks state for a single model deployment."""
+    def __init__(self):
+        self.last_used: float = 0.0
+        self.is_on_cooldown: bool = False
+        self.cooldown_until: float = 0.0
+        self.failure_count: int = 0
 
 class ModelStateManager:
-    """Потокобезопасный класс для управления состоянием и лимитами моделей."""
+    """Manages state for all model deployments."""
+    def __init__(self):
+        self.states: Dict[str, ModelState] = {}
+        self.logger = logging.getLogger(__name__)
 
-    def __init__(self, deployments: list[ModelDeployment]):
-        self._state: Dict[str, Dict] = {}
-        self._deployments = {d.deployment_id: d for d in deployments}
-        self._lock = threading.Lock()
-        self._initialize_state()
-        logging.info("Менеджер состояния инициализирован.")
-
-    def _initialize_state(self):
-        logging.info(f"Initializing state for {len(self._deployments)} deployments.")
-        for dep_id, deployment in self._deployments.items():
-            logging.info(f"Initializing state for deployment: {deployment.deployment_id}")
-            self._state[dep_id] = {
-                "last_used": 0.0,
-                "is_on_cooldown": False,
-                "cooldown_until": 0.0,
-            }
+    def _get_state(self, deployment_id: str) -> ModelState:
+        """Get or create state for a deployment."""
+        if deployment_id not in self.states:
+            self.states[deployment_id] = ModelState()
+        return self.states[deployment_id]
 
     def is_available(self, deployment_id: str) -> bool:
-        """Проверяет, доступна ли модель с учетом лимитов."""
-        with self._lock:
-            logging.info(f"Checking availability for deployment: {deployment_id}")
-            deployment = self._deployments.get(deployment_id)
-            if not deployment:
-                logging.warning(f"Deployment {deployment_id} not found in deployments list")
-                return False
-
-            state = self._state[deployment_id]
-            current_time = time.time()
-            logging.info(f"Current state: {state}")
-
-            # Проверка общего кулдауна (например, после ошибки 429)
-            if state["is_on_cooldown"]:
-                if current_time < state["cooldown_until"]:
-                    logging.info(
-                        f"Model {deployment_id} is on cooldown until {state['cooldown_until']} "
-                        f"(current time: {current_time})"
-                    )
-                    return False
-                else:
-                    logging.info(
-                        f"Cooldown expired for {deployment_id}. Resetting cooldown flag."
-                    )
-                    state["is_on_cooldown"] = False
-
-            # Проверка RPM
-            if deployment.litellm_params.rpm:
-                cooldown_duration = 60.0 / deployment.litellm_params.rpm
-                time_since_last_use = current_time - state["last_used"]
-                logging.info(
-                    f"RPM check: {deployment.litellm_params.rpm} RPM "
-                    f"-> min interval: {cooldown_duration:.2f}s, "
-                    f"time since last use: {time_since_last_use:.2f}s"
+        """Check if a deployment is available for use."""
+        state = self._get_state(deployment_id)
+        current_time = time.time()
+        
+        # Check if on cooldown
+        if state.is_on_cooldown:
+            if current_time >= state.cooldown_until:
+                state.is_on_cooldown = False
+                self.logger.info(f"Cooldown ended for {deployment_id}")
+            else:
+                # Still on cooldown
+                self.logger.info(
+                    f"Model {deployment_id} on cooldown until {state.cooldown_until}"
                 )
-                
-                if time_since_last_use < cooldown_duration:
-                    logging.info(
-                        f"Model {deployment_id} is rate limited. "
-                        f"Time since last use: {time_since_last_use:.2f} sec, "
-                        f"required cooldown: {cooldown_duration:.2f} sec"
-                    )
-                    return False
-
-            logging.info(f"Model {deployment_id} is available")
-            return True
+                return False
+        
+        # Additional availability checks could be added here
+        return True
 
     def record_success(self, deployment_id: str):
-        """Записывает успешное использование модели."""
-        with self._lock:
-            if deployment_id in self._state:
-                self._state[deployment_id]["last_used"] = time.time()
-                logging.debug(f"Успешный вызов для {deployment_id} записан.")
+        """Record a successful request to a deployment."""
+        state = self._get_state(deployment_id)
+        state.last_used = time.time()
+        state.failure_count = 0
+        self.logger.info(f"Recorded success for {deployment_id}")
 
     def record_failure(self, deployment_id: str, status_code: int):
-        """Записывает сбой и может отправить модель в 'кулдаун'."""
-        with self._lock:
-            if deployment_id in self._state and status_code == 429:
-                cooldown_duration = 60  # секунд
-                self._state[deployment_id]["is_on_cooldown"] = True
-                self._state[deployment_id]["cooldown_until"] = (
-                    time.time() + cooldown_duration
-                )
-                logging.warning(
-                    f"Модель {deployment_id} получила статус 429. Отправлена в кулдаун на {cooldown_duration} сек."
-                )
+        """Record a failed request to a deployment."""
+        state = self._get_state(deployment_id)
+        state.failure_count += 1
+        self.logger.warning(
+            f"Recorded failure #{state.failure_count} for {deployment_id} (status: {status_code})"
+        )
+        
+        # For rate limit errors, set cooldown
+        if status_code == 429:
+            self.set_cooldown(deployment_id, 60)  # Default 60s cooldown
+
+    def set_cooldown(self, deployment_id: str, duration: float):
+        """Set a cooldown period for a deployment."""
+        state = self._get_state(deployment_id)
+        state.is_on_cooldown = True
+        state.cooldown_until = time.time() + duration
+        self.logger.info(
+            f"Set cooldown for {deployment_id} until {state.cooldown_until}"
+        )

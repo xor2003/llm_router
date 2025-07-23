@@ -23,7 +23,7 @@ def get_state_manager() -> ModelStateManager:
     """Зависимость для получения менеджера состояний."""
     config = get_config()
     # Инициализируем с deployment_id из конфигурации
-    return ModelStateManager(config.model_list)
+    return ModelStateManager()
 
 
 @lru_cache(maxsize=1)
