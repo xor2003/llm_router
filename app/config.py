@@ -26,8 +26,8 @@ class BackendModel(BaseModel):
     """Represents a single backend model provider"""
 
     id: str = Field(...) # Unique backend LLM ID for state tracking
-    group_name: str = Field(..., alias="model_name")# LLM group name, e.g., "gateway-model"
-    model_name: str
+    group_name: str # LLM group name, e.g., "my-router"
+    model_name: str # Full model identifier
     api_key: str
     api_base: str | None = None
     rpm: int | None = None
@@ -75,10 +75,16 @@ def load_config(path: str) -> AppConfig:
         valid_models = []
 
         for model_definition in raw_config.get("model_list", []):
-            model_struct = {"group_name": model_definition["model_name"]}
+            # Use group name from configuration
+            group_name = model_definition["model_name"]
             litellm_params = model_definition.get("litellm_params", {})
 
             api_key = litellm_params.get("api_key", "")
+
+            model_struct = {
+                "group_name": group_name,  # Set group name directly
+                "model_name": litellm_params["model"]  # Full model identifier
+            }
 
             if not api_key:
                 logging.warning(
@@ -111,7 +117,8 @@ def load_config(path: str) -> AppConfig:
                 model_struct["model_name"] = litellm_params["model"].split("/")[1]
             else:
                 model_struct["api_base"] = litellm_params["api_base"]
-                model_struct["model_name"] = "/".join(litellm_params["model"].split("/")[1:])
+                # Set model_name to the full model identifier
+                model_struct["model_name"] = litellm_params["model"]
 
             valid_models.append(model_struct)
 

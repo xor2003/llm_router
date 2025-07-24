@@ -25,8 +25,8 @@ class LLMRouter:
         logging.info(f"Total backend models: {len(backend_models)}")
 
         for model in backend_models:
-            # Use the model's configured model_name as the group name
-            group_name = model.model_name
+            # Use the model's group_name as the group name
+            group_name = model.group_name
             logging.info(
                 f"Processing backend model: id={model.id}, group_name={group_name}, backend model={model.model_name}",
             )

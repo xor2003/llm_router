@@ -27,6 +27,10 @@ class LLMClient:
             self.client = genai.GenerativeModel(base_model)
             self.gemini = True
         else:
+            # For OpenRouter, remove the 'openrouter/' prefix
+            if self.model_name.startswith("openrouter/"):
+                self.model_name = self.model_name[len("openrouter/"):]
+                
             self.client = AsyncOpenAI(
                 base_url=backend_model.api_base,
                 api_key=backend_model.api_key,
