@@ -28,7 +28,7 @@ class LLMRouter:
             # Use the model's configured model_name as the group name
             group_name = model.model_name
             logging.info(
-                f"Processing backend model: id={model.backend_model_id}, group_name={group_name}, litellm_model={model.litellm_params.model}",
+                f"Processing backend model: id={model.backend_model_id}, group_name={group_name}, backend model={model.litellm_params.model}",
             )
 
             if group_name not in self._model_groups:

@@ -15,12 +15,12 @@ class RateLimitException(Exception):
 
 class LLMClient:
     def __init__(self, backend_model: BackendModel):
-        self.backend_model_id = backend_model.backend_model_id
-        self.model_name = backend_model.litellm_params.model
+        self.id = backend_model.id
+        self.model_name = backend_model.model_params.model_name
 
         # Handle Gemini models specially
         if "gemini" in self.model_name.lower():
-            genai.configure(api_key=backend_model.litellm_params.api_key)
+            genai.configure(api_key=backend_model.model_params.api_key)
             # Extract base model name without any prefixes
             base_model = self.model_name.split("/")[-1].split(":")[0]
 
@@ -28,8 +28,8 @@ class LLMClient:
             self.gemini = True
         else:
             self.client = AsyncOpenAI(
-                base_url=backend_model.litellm_params.api_base,
-                api_key=backend_model.litellm_params.api_key,
+                base_url=backend_model.model_params.api_base,
+                api_key=backend_model.model_params.api_key,
             )
             self.gemini = False
 
@@ -77,7 +77,16 @@ class LLMClient:
                 # Use existing OpenAI client for non-Gemini models
                 logging.info(f"Making request to {self.model_name} with payload")
                 payload["model"] = self.model_name
-                response = await self.client.chat.completions.create(**payload)
+                
+                # Handle tool calling parameters if present
+                if "tools" in payload:
+                    response = await self.client.chat.completions.create(
+                        tools=payload["tools"],
+                        tool_choice=payload.get("tool_choice", "auto"),
+                        **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
+                    )
+                else:
+                    response = await self.client.chat.completions.create(**payload)
 
                 # Log rate limit headers if available
                 if hasattr(response, "headers"):

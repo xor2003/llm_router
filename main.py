@@ -66,8 +66,8 @@ async def chat_completions(
                 )
 
             logging.info(
-                f"Attempt {retry_count+1}/{max_retries}: Using backend model {backend_model.backend_model_id} "
-                f"(model: {backend_model.litellm_params.model})"
+                f"Attempt {retry_count+1}/{max_retries}: Using backend model id: {backend_model.backend_model_id} "
+                f"(backend model: {backend_model.litellm_params.model})"
             )
 
             try:

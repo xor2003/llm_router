@@ -15,13 +15,22 @@ class LiteLLMParams(BaseModel):
     # Добавьте другие параметры litellm по необходимости
 
 
-class BackendModel(BaseModel):
+class DeploymentModel(BaseModel):
     """Represents a single backend model provider"""
 
     model_name: str  # Router group name, e.g., "gateway-model"
     litellm_params: LiteLLMParams
-    # Unique ID for state tracking
-    backend_model_id: str = Field(..., alias="id")
+
+
+class BackendModel(BaseModel):
+    """Represents a single backend model provider"""
+
+    id: str = Field(...) # Unique backend LLM ID for state tracking
+    group_name: str = Field(..., alias="model_name")# LLM group name, e.g., "gateway-model"
+    model_name: str
+    api_key: str
+    api_base: str | None = None
+    rpm: int | None = None
 
 
 class ProxyServerConfig(BaseModel):
@@ -65,39 +74,46 @@ def load_config(path: str) -> AppConfig:
         # Парсинг переменных окружения
         valid_models = []
 
-        for model_def in raw_config.get("model_list", []):
-            params = model_def.get("litellm_params", {})
+        for model_definition in raw_config.get("model_list", []):
+            model_struct = {"group_name": model_definition["model_name"]}
+            litellm_params = model_definition.get("litellm_params", {})
 
-            # Generate unique ID
-            model_id = model_def["model_name"]  # + "/" + params["api_key"][-4:]
-            model_def["id"] = model_id
+            api_key = litellm_params.get("api_key", "")
 
-            if params.get("api_base") is None and params["model"].startswith("gemini/"):
-                # Use the correct Gemini endpoint
-                params["api_base"] = (
-                    "https://generativelanguage.googleapis.com/v1beta/models/"
+            if not api_key:
+                logging.warning(
+                    f"API ключ для модели {litellm_params.get('model', 'unknown')} отсутствует. Пропускаем.",
                 )
-                params["model"] = params["model"].split("/")[1]
-            else:
-                params["model"] = "/".join(params["model"].split("/")[1:])
-            key_str = params.get("api_key", "")
-            if key_str.startswith("os.environ/"):
-                env_var = key_str.split("/")[-1]
+                continue
+
+            if api_key.startswith("os.environ/"):
+                env_var = api_key.split("/")[-1]
                 # Use the env_settings object instead of os.getenv
-                params["api_key"] = getattr(env_settings, env_var, None)
-                if not params["api_key"]:
+                model_struct["api_key"] = getattr(env_settings, env_var, None)
+                if not model_struct["api_key"]:
                     logging.error(
                         f"Переменная окружения {env_var} не найдена. Пропускаем модель.",
                     )
                     continue
 
-            if not params.get("api_key"):
-                logging.warning(
-                    f"API ключ для модели {params.get('model', 'unknown')} отсутствует. Пропускаем.",
-                )
-                continue
+            # Generate unique ID
+            model_struct["id"] = (
+                litellm_params["model"] + "/" + model_struct["api_key"][-4:]
+            )
+            model_struct["rpm"] = litellm_params["rpm"]
+            model_struct["rpm"] = litellm_params["rpm"]
 
-            valid_models.append(model_def)
+            if litellm_params.get("api_base") is None and litellm_params["model"].startswith("gemini/"):
+                # Use the correct Gemini endpoint
+                model_struct["api_base"] = (
+                    "https://generativelanguage.googleapis.com/v1beta/models/"
+                )
+                model_struct["model_name"] = litellm_params["model"].split("/")[1]
+            else:
+                model_struct["api_base"] = litellm_params["api_base"]
+                model_struct["model_name"] = "/".join(litellm_params["model"].split("/")[1:])
+
+            valid_models.append(model_struct)
 
         raw_config["model_list"] = valid_models
 
