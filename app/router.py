@@ -28,7 +28,7 @@ class LLMRouter:
             # Use the model's configured model_name as the group name
             group_name = model.model_name
             logging.info(
-                f"Processing backend model: id={model.backend_model_id}, group_name={group_name}, backend model={model.litellm_params.model}",
+                f"Processing backend model: id={model.id}, group_name={group_name}, backend model={model.model_name}",
             )
 
             if group_name not in self._model_groups:
@@ -37,7 +37,7 @@ class LLMRouter:
 
             self._model_groups[group_name].append(model)
             logging.info(
-                f"Added backend model to group '{group_name}': {model.backend_model_id}",
+                f"Added backend model to group '{group_name}': {model.id}",
             )
 
         # Initialize counters for each group
@@ -67,7 +67,7 @@ class LLMRouter:
                 current_index = (start_index + i) % len(models_in_group)
                 model = models_in_group[current_index]
 
-                if self._state_manager.is_available(model.backend_model_id):
+                if self._state_manager.is_available(model.id):
                     logging.info(
                         f"Selected model: {model.model_name} from group {model_group}"
                     )

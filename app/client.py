@@ -16,11 +16,11 @@ class RateLimitException(Exception):
 class LLMClient:
     def __init__(self, backend_model: BackendModel):
         self.id = backend_model.id
-        self.model_name = backend_model.model_params.model_name
+        self.model_name = backend_model.model_name
 
         # Handle Gemini models specially
         if "gemini" in self.model_name.lower():
-            genai.configure(api_key=backend_model.model_params.api_key)
+            genai.configure(api_key=backend_model.api_key)
             # Extract base model name without any prefixes
             base_model = self.model_name.split("/")[-1].split(":")[0]
 
@@ -28,8 +28,8 @@ class LLMClient:
             self.gemini = True
         else:
             self.client = AsyncOpenAI(
-                base_url=backend_model.model_params.api_base,
-                api_key=backend_model.model_params.api_key,
+                base_url=backend_model.api_base,
+                api_key=backend_model.api_key,
             )
             self.gemini = False
 

@@ -66,17 +66,17 @@ async def chat_completions(
                 )
 
             logging.info(
-                f"Attempt {retry_count+1}/{max_retries}: Using backend model id: {backend_model.backend_model_id} "
-                f"(backend model: {backend_model.litellm_params.model})"
+                f"Attempt {retry_count+1}/{max_retries}: Using backend model id: {backend_model.id} "
+                f"(backend model: {backend_model.model_name})"
             )
 
             try:
                 # Make a copy of payload to avoid mutating original
                 payload_copy = payload.copy()
-                payload_copy["model"] = backend_model.litellm_params.model
-                client = client_map[backend_model.backend_model_id]
+                payload_copy["model"] = backend_model.model_name
+                client = client_map[backend_model.id]
                 async_response = await client.make_request(payload_copy)
-                state_manager.record_success(backend_model.backend_model_id)
+                state_manager.record_success(backend_model.id)
 
                 if stream:
                     async def stream_generator():
@@ -84,19 +84,19 @@ async def chat_completions(
                             async for chunk in async_response:
                                 yield f"data: {chunk.model_dump_json()}\n\n"
                         except Exception as e:
-                            logging.error(f"Stream error for {backend_model.backend_model_id}: {e}")
+                            logging.error(f"Stream error for {backend_model.id}: {e}")
                         finally:
-                            logging.info(f"Stream closed for {backend_model.backend_model_id}")
+                            logging.info(f"Stream closed for {backend_model.id}")
 
                     return StreamingResponse(stream_generator(), media_type="text/event-stream")
                 else:
                     response_json = async_response.model_dump()
-                    logging.info(f"Response for {backend_model.litellm_params.model}: {response_json}")
+                    logging.info(f"Response for {backend_model.model_name}: {response_json}")
                     return JSONResponse(content=response_json)
 
             except HTTPStatusError as e:
                 status_code = e.response.status_code
-                state_manager.record_failure(backend_model.backend_model_id, status_code)
+                state_manager.record_failure(backend_model.id, status_code)
                 last_error = e
                 
                 if status_code == 429:
@@ -109,14 +109,14 @@ async def chat_completions(
                         reset_time = reset_time / 1000.0
                     
                     # Set precise cooldown
-                    state_manager.set_cooldown(backend_model.backend_model_id, reset_time)
+                    state_manager.set_cooldown(backend_model.id, reset_time)
                     logging.warning(
-                        f"Rate limit hit for {backend_model.backend_model_id}, "
+                        f"Rate limit hit for {backend_model.id}, "
                         f"cooldown until {time.ctime(reset_time)}"
                     )
                 else:
                     logging.warning(
-                        f"Request failed with status {status_code} on backend model {backend_model.backend_model_id}. "
+                        f"Request failed with status {status_code} on backend model {backend_model.id}. "
                         f"Error: {e.response.text}"
                     )
                 
@@ -125,9 +125,9 @@ async def chat_completions(
                 
             except RateLimitException as e:
                 # Set precise cooldown from exception
-                state_manager.set_cooldown(backend_model.backend_model_id, e.reset_time)
+                state_manager.set_cooldown(backend_model.id, e.reset_time)
                 logging.warning(
-                    f"Rate limit error for {backend_model.backend_model_id}, "
+                    f"Rate limit error for {backend_model.id}, "
                     f"cooldown until {time.ctime(e.reset_time)}"
                 )
                 last_error = e

@@ -37,4 +37,4 @@ def get_router() -> LLMRouter:
 @lru_cache(maxsize=1)
 def get_client_map() -> dict[str, LLMClient]:
     config = get_config()
-    return {model.backend_model_id: get_llm_client(model) for model in config.model_list}
+    return {model.id: get_llm_client(model) for model in config.model_list}
