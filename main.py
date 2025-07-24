@@ -19,9 +19,11 @@ from app.dependencies import get_config, get_client_map, get_router, get_state_m
 from app.router import LLMRouter
 from app.state import ModelStateManager
 
+import os
 # Configure logging
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 app = FastAPI(title="LLM Proxy Server")

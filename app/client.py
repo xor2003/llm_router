@@ -40,6 +40,7 @@ class LLMClient:
     async def make_request(self, payload: dict[str, Any]) -> Any:
         """Send request to the LLM backend_model endpoint with error forwarding"""
         logging.info(f"Making request to {self.model_name}")
+        logging.debug(f"Request payload: {payload}")
         try:
             if self.gemini:
                 # Gemini handling remains the same
@@ -102,6 +103,8 @@ class LLMClient:
                             f"Reset: {headers.get('X-RateLimit-Reset', '?')}"
                         )
 
+                # Log response for debugging
+                logging.debug(f"Response from {self.model_name}: {response}")
                 return response
         except APIStatusError as e:
             if e.status_code == 429:
