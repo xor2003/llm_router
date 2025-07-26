@@ -32,6 +32,7 @@ class BackendModel(BaseModel):
     api_base: str | None = None
     rpm: int | None = None
     supports_tools: bool = False # Whether this model supports tool calls
+    supports_mcp: bool = Field(default=False, description="Whether this model supports MCP protocol")
 
 
 class ProxyServerConfig(BaseModel):
@@ -109,7 +110,13 @@ def load_config(path: str) -> AppConfig:
                 litellm_params["model"] + "/" + model_struct["api_key"][-4:]
             )
             model_struct["rpm"] = litellm_params["rpm"]
-            model_struct["rpm"] = litellm_params["rpm"]
+            
+            # Detect tool support based on model name
+            model_name = litellm_params["model"].lower()
+            model_struct["supports_tools"] = any(
+                kw in model_name
+                for kw in {"gpt-4", "claude", "command-r", "mixtral"}
+            )
 
             if litellm_params.get("api_base") is None and litellm_params["model"].startswith("gemini/"):
                 # Use the correct Gemini endpoint

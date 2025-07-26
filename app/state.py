@@ -19,6 +19,13 @@ class ModelStateManager:
         self.states: dict[str, ModelState] = {}
         self.logger = logging.getLogger(__name__)
 
+    def initialize_models(self, model_ids: list[str]):
+        """Initialize state for multiple models at once"""
+        for model_id in model_ids:
+            if model_id not in self.states:
+                self.states[model_id] = ModelState()
+                self.logger.info(f"Initialized state for model: {model_id}")
+
     def _get_state(self, backend_model_id: str) -> ModelState:
         """Get or create state for a backend_model."""
         if backend_model_id not in self.states:
@@ -34,6 +41,7 @@ class ModelStateManager:
         if state.is_on_cooldown:
             if current_time >= state.cooldown_until:
                 state.is_on_cooldown = False
+                state.failure_count = 0  # Reset failure count after cooldown
                 self.logger.info(f"Cooldown ended for {backend_model_id}")
             else:
                 # Still on cooldown
@@ -42,7 +50,11 @@ class ModelStateManager:
                 )
                 return False
 
-        # Additional availability checks could be added here
+        # Implement basic rate limiting
+        time_since_last_use = current_time - state.last_used
+        if time_since_last_use < 0.1:  # 100ms minimum between requests
+            return False
+
         return True
 
     def record_success(self, backend_model_id: str):

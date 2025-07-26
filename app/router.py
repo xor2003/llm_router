@@ -20,6 +20,11 @@ class LLMRouter:
         self._model_groups: dict[str, list[BackendModel]] = {}
         self._group_counters: dict[str, int] = {}
         self._build_groups(backend_models)
+        
+        # Initialize state for all models
+        model_ids = [model.id for group in self._model_groups.values() for model in group]
+        state_manager.initialize_models(model_ids)
+        
         logging.info("Router initialized.")
 
     def _build_groups(self, backend_models: list[BackendModel]):
@@ -81,7 +86,14 @@ class LLMRouter:
                 logging.info(f"Selected model: {model.model_name} from group {model_group}")
                 # Update counter for the next request to ensure round-robin
                 self._group_counters[model_group] = (current_index + 1) % len(preferred_order)
-                return model
+                
+                try:
+                    # Add MCP support flag to selected model
+                    model.supports_mcp = True
+                    return model
+                except Exception as e:
+                    logging.error(f"Failed to select model {model.id}: {str(e)}")
+                    return None
         
         logging.error(f"No available models in group {model_group} after checking all options.")
         return None
@@ -111,3 +123,23 @@ class LLMRouter:
             "parameters": params,
             "raw_xml": match.group(0)
         }
+    
+    def translate_openai_tools_to_xml(self, tools: list) -> str:
+        """
+        Translates OpenAI-style tool definitions to XML format for MCP.
+        """
+        xml_tools = []
+        for tool in tools:
+            tool_name = tool["function"]["name"]
+            params = tool["function"].get("parameters", {})
+            xml_tool = f"<{tool_name}>\n"
+            
+            if params:
+                for prop, details in params.get("properties", {}).items():
+                    desc = details.get("description", "")
+                    xml_tool += f"  <{prop}>{desc}</{prop}>\n"
+            
+            xml_tool += f"</{tool_name}>"
+            xml_tools.append(xml_tool)
+        
+        return "\n\n".join(xml_tools)

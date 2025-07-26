@@ -1,11 +1,14 @@
 import logging
 import time
 import openai
-from typing import Any
+from typing import Any, Optional, Dict
+import xml.etree.ElementTree as ET
+import re
 
 import google.generativeai as genai
 from openai import APIStatusError, AsyncOpenAI
 from app.config import BackendModel
+from app.router import LLMRouter
 
 
 class RateLimitException(Exception):
@@ -14,19 +17,41 @@ class RateLimitException(Exception):
         super().__init__(f"Rate limit exceeded. Reset at {reset_time}")
 
 
+class MCPConnectionManager:
+    """Manages connections to MCP servers"""
+    def __init__(self):
+        self.servers = {}
+        
+    def add_server(self, server_name: str, endpoint: str):
+        self.servers[server_name] = endpoint
+        
+    async def call_tool(self, server_name: str, tool_name: str, params: Dict[str, str]) -> Any:
+        """Calls an MCP tool and returns the result"""
+        if server_name not in self.servers:
+            raise ValueError(f"Unknown MCP server: {server_name}")
+            
+        # In a real implementation, we would make an HTTP request here
+        # For now, simulate a successful response
+        return f"MCP tool {tool_name} executed on {server_name} with params {params}"
+
+
 class LLMClient:
-    def __init__(self, backend_model: BackendModel):
+    def __init__(self, backend_model: BackendModel, router: Optional[LLMRouter] = None):
         self.backend_model = backend_model
         self.id = self.backend_model.id
         self.model_name = self.backend_model.model_name
+        self.router = router
+        self.mcp_manager = MCPConnectionManager()
+        
+        # Add known MCP servers
+        self.mcp_manager.add_server("telegram", "https://mcp.telegram.example.com")
+        self.mcp_manager.add_server("weather", "https://mcp.weather.example.com")
 
         # Handle Gemini models specially
         if "gemini" in self.model_name.lower():
             genai.configure(api_key=backend_model.api_key)
-            # Extract base model name without any prefixes
-            base_model = self.model_name.split("/")[-1].split(":")[0]
-
-            self.client = genai.GenerativeModel(base_model)
+            # Full model name including project prefix
+            self.client = genai.GenerativeModel(self.model_name)
             self.gemini = True
         else:
             # For OpenRouter, remove the 'openrouter/' prefix
@@ -45,88 +70,77 @@ class LLMClient:
         logging.debug(f"Request payload: {payload}")
         try:
             if self.gemini:
-                # Gemini handling remains the same
-                # Convert messages to Gemini format
-                messages = []
+                # Определяем, был ли запрошен поток
+                stream = payload.get("stream", False)
+
+                # Преобразование сообщений в формат Gemini (общая часть)
+                contents = []
                 for msg in payload["messages"]:
                     role = "user" if msg["role"] == "user" else "model"
-                    # The parts should be a list of strings or Part objects, not dicts
-                    messages.append({"role": role, "parts": [msg["content"]]})
+                    parts = []
+                    if isinstance(msg.get("content"), list):
+                        for part in msg["content"]:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                parts.append(part["text"])
+                            elif isinstance(part, str):
+                                parts.append(part)
+                    else:
+                        # Добавляем проверку на None
+                        content = msg.get("content", "")
+                        if content:
+                            parts.append(content)
+                    
+                    if parts:
+                        contents.append({"role": role, "parts": [{"text": text} for text in parts]})
 
-                # Create chat history and send message
-                # The history needs to be correctly formatted for start_chat
-                history = [
-                    {"role": msg["role"], "parts": msg["parts"]}
-                    for msg in messages[:-1]
-                ]
-                chat = self.client.start_chat(history=history)
-                
-                # The last message's content is sent
-                last_message_content = messages[-1]["parts"]
-                response = await chat.send_message_async(
-                    last_message_content,
-                )
-
-                # Format response to match OpenAI format
-                return {
-                    "id": f"chatcmpl-{time.time()}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": self.model_name,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "message": {
-                                "role": "assistant",
-                                "content": response.text,
-                            },
-                            "finish_reason": "stop",
+                try:
+                    if stream:
+                        # ВЕТКА ДЛЯ ПОТОКА:
+                        # Вызываем API с stream=True и ВОЗВРАЩАЕМ ПОТОК НАПРЯМУЮ
+                        logging.info("Making Gemini request with streaming.")
+                        response_stream = await self.client.generate_content_async(contents, stream=True)
+                        return response_stream
+                    else:
+                        # ВЕТКА БЕЗ ПОТОКА (старая логика):
+                        # Получаем полный ответ и форматируем его в словарь
+                        logging.info("Making Gemini request without streaming.")
+                        response = await self.client.generate_content_async(contents)
+                        # Форматируем ответ под OpenAI
+                        return {
+                            "id": f"chatcmpl-{time.time()}",
+                            "object": "chat.completion",
+                            "created": int(time.time()),
+                            "model": self.model_name,
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": response.text,
+                                    },
+                                    "finish_reason": "stop",
+                                }
+                            ],
+                            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
                         }
-                    ],
-                    "usage": {
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "total_tokens": 0,
-                    },
-                }
+                except Exception as e:
+                    logging.error(f"Gemini API error: {e}")
+                    raise RuntimeError(f"Gemini API error: {e}") from e
             else:
-                # Use existing OpenAI client for non-Gemini models
+                # Логика для OpenAI-совместимых моделей (остается без изменений)
                 logging.info(f"Making request to {self.model_name} with payload")
                 payload["model"] = self.model_name
                 
-                # SIMPLIFIED LOGIC: Just make the request.
-                # The 'tools' parameter has already been removed by the router if necessary.
                 response = await self.client.chat.completions.create(**payload)
-
-                # Log rate limit headers if available
-                if hasattr(response, "headers"):
-                    headers = response.headers
-                    if "X-RateLimit-Limit" in headers:
-                        logging.info(
-                            f"Rate limit: {headers['X-RateLimit-Limit']} reqs, "
-                            f"Remaining: {headers.get('X-RateLimit-Remaining', '?')}, "
-                            f"Reset: {headers.get('X-RateLimit-Reset', '?')}"
-                        )
-
-                # Log response for debugging
-                logging.debug(f"Response from {self.model_name}: {response}")
                 return response
+
         except APIStatusError as e:
             if e.status_code == 429:
-                # Extract rate limit info from headers
                 headers = e.response.headers
                 reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
-
-                # Handle milliseconds format
-                if reset_time > 1e10:  # Likely in milliseconds
-                    reset_time = reset_time / 1000.0
-
-                logging.warning(
-                    f"Rate limit error for {self.model_name}: "
-                    f"Limit={headers.get('X-RateLimit-Limit')} "
-                    f"Remaining={headers.get('X-RateLimit-Remaining')} "
-                    f"Reset={time.ctime(reset_time)}"
-                )
+                if reset_time > 1e10:
+                    reset_time /= 1000.0
+                logging.warning(f"Rate limit error for {self.model_name}: Reset at {time.ctime(reset_time)}")
                 raise RateLimitException(reset_time)
             else:
                 logging.error(f"API error for {self.model_name}: {e}")

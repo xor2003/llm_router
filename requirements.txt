@@ -7,6 +7,6 @@ httpx
 python-dotenv
 litellm
 openai
-google-generativeai
+google-genai
 
 cachetools
