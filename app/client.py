@@ -94,33 +94,9 @@ class LLMClient:
                 logging.info(f"Making request to {self.model_name} with payload")
                 payload["model"] = self.model_name
                 
-                # Handle tool calling parameters if present
-                if "tools" in payload and self.backend_model.supports_tools:
-                    try:
-                        # Attempt with native tool calling
-                        response = await self.client.chat.completions.create(
-                            tools=payload["tools"],
-                            tool_choice=payload.get("tool_choice", "auto"),
-                            **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
-                        )
-                    except openai.NotFoundError as e:
-                        if "No endpoints found that support tool use" in str(e):
-                            logging.warning(
-                                f"Model {self.model_name} does not support native tool calls. "
-                                f"Marking as non-supporting and falling back to XML workaround."
-                            )
-                            # Mark the model as not supporting tools for future requests
-                            self.backend_model.supports_tools = False
-                            # Immediately retry without tool parameters
-                            response = await self.client.chat.completions.create(
-                                **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
-                            )
-                        else:
-                            # Re-raise other NotFoundErrors
-                            raise
-                else:
-                    # Either no tools were requested, or the model is already known not to support them
-                    response = await self.client.chat.completions.create(**payload)
+                # SIMPLIFIED LOGIC: Just make the request.
+                # The 'tools' parameter has already been removed by the router if necessary.
+                response = await self.client.chat.completions.create(**payload)
 
                 # Log rate limit headers if available
                 if hasattr(response, "headers"):

@@ -8,3 +8,5 @@ python-dotenv
 litellm
 openai
 google-generativeai
+
+cachetools

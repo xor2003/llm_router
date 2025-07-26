@@ -48,6 +48,7 @@ class AppConfig(BaseModel):
     proxy_server_config: ProxyServerConfig
     model_list: list[BackendModel]
     router_settings: RouterSettings
+    mcp_tool_use_prompt_template: str
 
 
 # Загрузка .env файла
@@ -131,6 +132,10 @@ def load_config(path: str) -> AppConfig:
                 "routing_strategy": "simple-shuffle",
                 "num_retries": 1,
             }
+
+        # Load the MCP tool use prompt template
+        with open("prompts/mcp_tool_use_prompt.txt", "r") as f:
+            raw_config["mcp_tool_use_prompt_template"] = f.read()
 
         return AppConfig.parse_obj(raw_config)
     except (FileNotFoundError, ValidationError, TypeError) as e:
