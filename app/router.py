@@ -2,6 +2,8 @@ import logging
 import time
 
 from .config import BackendModel, RouterSettings
+import re
+from typing import Optional, Dict, Any
 from .state import ModelStateManager
 
 
@@ -46,46 +48,66 @@ class LLMRouter:
             self._group_counters[group_name] = 0
             logging.info(f"Initialized counter for group: {group_name}")
 
-    def get_next_backend_model(self, model_group: str, max_retries: int = 5, retry_delay: float = 0.1) -> BackendModel | None:
+    def get_next_backend_model(
+        self,
+        model_group: str,
+        tools: Optional[list] = None,
+        max_retries: int = 5,
+        retry_delay: float = 0.1
+    ) -> BackendModel | None:
         """
-        Finds the next available backend model in the group.
-        Implements round-robin rotation with rate limit awareness.
+        Finds the next available backend model in the group using round-robin.
+        If tools are requested, it gives one-time preference to models known to support them.
         """
         models_in_group = self._model_groups.get(model_group, [])
         if not models_in_group:
-            logging.warning(
-                f"Attempted to get model from non-existent group: {model_group}"
-            )
+            logging.warning(f"Attempted to get model from non-existent group: {model_group}")
             return None
 
-        start_index = self._group_counters[model_group]
-        retry_count = 0
+        start_index = self._group_counters.get(model_group, 0)
+        
+        # Create a preferred order: tool-supporting models first, then the rest
+        preferred_order = sorted(
+            models_in_group,
+            key=lambda m: m.supports_tools,
+            reverse=True
+        )
 
-        while retry_count < max_retries:
-            # Loop through to find available model
-            for i in range(len(models_in_group)):
-                current_index = (start_index + i) % len(models_in_group)
-                model = models_in_group[current_index]
+        for i in range(len(preferred_order)):
+            current_index = (start_index + i) % len(preferred_order)
+            model = preferred_order[current_index]
 
-                if self._state_manager.is_available(model.id):
-                    logging.info(
-                        f"Selected model: {model.model_name} from group {model_group}"
-                    )
-                    # Update counter for next request
-                    self._group_counters[model_group] = (current_index + 1) % len(
-                        models_in_group
-                    )
-                    return model
-
-            if retry_count < max_retries - 1:
-                logging.warning(
-                    f"No available models in group {model_group}. "
-                    f"Retrying in {retry_delay} sec. ({retry_count+1}/{max_retries})"
-                )
-                time.sleep(retry_delay)
-                retry_count += 1
-            else:
-                break
-
-        logging.error(f"No available models in group {model_group} after {max_retries} attempts.")
+            if self._state_manager.is_available(model.id):
+                logging.info(f"Selected model: {model.model_name} from group {model_group}")
+                # Update counter for the next request to ensure round-robin
+                self._group_counters[model_group] = (current_index + 1) % len(preferred_order)
+                return model
+        
+        logging.error(f"No available models in group {model_group} after checking all options.")
         return None
+
+    def detect_tool_call(self, response_content: str) -> Optional[Dict[str, Any]]:
+        """
+        Detects if the response content contains a tool call in XML format.
+        If found, returns a structured tool call object.
+        Otherwise, returns None.
+        """
+        # Simple regex to match XML tool calls
+        tool_call_pattern = r'<(\w+)>(.*?)</\1>'
+        match = re.search(tool_call_pattern, response_content, re.DOTALL)
+        if not match:
+            return None
+
+        tool_name = match.group(1)
+        inner_content = match.group(2)
+
+        # Extract parameters
+        param_pattern = r'<(\w+)>(.*?)</\1>'
+        param_matches = re.findall(param_pattern, inner_content, re.DOTALL)
+        params = {name: value.strip() for name, value in param_matches}
+
+        return {
+            "tool_name": tool_name,
+            "parameters": params,
+            "raw_xml": match.group(0)
+        }

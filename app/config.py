@@ -31,6 +31,7 @@ class BackendModel(BaseModel):
     api_key: str
     api_base: str | None = None
     rpm: int | None = None
+    supports_tools: bool = False # Whether this model supports tool calls
 
 
 class ProxyServerConfig(BaseModel):

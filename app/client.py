@@ -1,5 +1,6 @@
 import logging
 import time
+import openai
 from typing import Any
 
 import google.generativeai as genai
@@ -15,8 +16,9 @@ class RateLimitException(Exception):
 
 class LLMClient:
     def __init__(self, backend_model: BackendModel):
-        self.id = backend_model.id
-        self.model_name = backend_model.model_name
+        self.backend_model = backend_model
+        self.id = self.backend_model.id
+        self.model_name = self.backend_model.model_name
 
         # Handle Gemini models specially
         if "gemini" in self.model_name.lower():
@@ -48,12 +50,21 @@ class LLMClient:
                 messages = []
                 for msg in payload["messages"]:
                     role = "user" if msg["role"] == "user" else "model"
-                    messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+                    # The parts should be a list of strings or Part objects, not dicts
+                    messages.append({"role": role, "parts": [msg["content"]]})
 
                 # Create chat history and send message
-                chat = self.client.start_chat(history=messages[:-1])
+                # The history needs to be correctly formatted for start_chat
+                history = [
+                    {"role": msg["role"], "parts": msg["parts"]}
+                    for msg in messages[:-1]
+                ]
+                chat = self.client.start_chat(history=history)
+                
+                # The last message's content is sent
+                last_message_content = messages[-1]["parts"]
                 response = await chat.send_message_async(
-                    messages[-1]["parts"][0]["text"],
+                    last_message_content,
                 )
 
                 # Format response to match OpenAI format
@@ -84,13 +95,31 @@ class LLMClient:
                 payload["model"] = self.model_name
                 
                 # Handle tool calling parameters if present
-                if "tools" in payload:
-                    response = await self.client.chat.completions.create(
-                        tools=payload["tools"],
-                        tool_choice=payload.get("tool_choice", "auto"),
-                        **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
-                    )
+                if "tools" in payload and self.backend_model.supports_tools:
+                    try:
+                        # Attempt with native tool calling
+                        response = await self.client.chat.completions.create(
+                            tools=payload["tools"],
+                            tool_choice=payload.get("tool_choice", "auto"),
+                            **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
+                        )
+                    except openai.NotFoundError as e:
+                        if "No endpoints found that support tool use" in str(e):
+                            logging.warning(
+                                f"Model {self.model_name} does not support native tool calls. "
+                                f"Marking as non-supporting and falling back to XML workaround."
+                            )
+                            # Mark the model as not supporting tools for future requests
+                            self.backend_model.supports_tools = False
+                            # Immediately retry without tool parameters
+                            response = await self.client.chat.completions.create(
+                                **{k: v for k, v in payload.items() if k not in ["tools", "tool_choice"]}
+                            )
+                        else:
+                            # Re-raise other NotFoundErrors
+                            raise
                 else:
+                    # Either no tools were requested, or the model is already known not to support them
                     response = await self.client.chat.completions.create(**payload)
 
                 # Log rate limit headers if available

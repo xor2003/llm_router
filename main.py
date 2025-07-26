@@ -77,24 +77,39 @@ async def chat_completions(
                 payload_copy = payload.copy()
                 payload_copy["model"] = backend_model.model_name
                 client = client_map[backend_model.id]
-                async_response = await client.make_request(payload_copy)
+                response = await client.make_request(payload_copy)
                 state_manager.record_success(backend_model.id)
-
-                if stream:
-                    async def stream_generator():
-                        try:
-                            async for chunk in async_response:
-                                yield f"data: {chunk.model_dump_json()}\n\n"
-                        except Exception as e:
-                            logging.error(f"Stream error for {backend_model.id}: {e}")
-                        finally:
-                            logging.info(f"Stream closed for {backend_model.id}")
-
-                    return StreamingResponse(stream_generator(), media_type="text/event-stream")
+        
+                # Check if response contains tool call
+                if isinstance(response, dict) and response.get("type") == "tool_call":
+                    # Store conversation state for later continuation
+                    conversation_id = f"conv_{int(time.time()*1000)}"
+                    conversation_states[conversation_id] = {
+                        "model_group": model_group,
+                        "messages": payload["messages"],
+                        "tool_call": response
+                    }
+                    return JSONResponse(content={
+                        "conversation_id": conversation_id,
+                        "tool_call": response
+                    }, status_code=200)
                 else:
-                    response_json = async_response.model_dump()
-                    logging.info(f"Response for {backend_model.model_name}: {response_json}")
-                    return JSONResponse(content=response_json)
+                    # Regular response
+                    if stream:
+                        async def stream_generator():
+                            try:
+                                async for chunk in response:
+                                    yield f"data: {chunk.model_dump_json()}\n\n"
+                            except Exception as e:
+                                logging.error(f"Stream error for {backend_model.id}: {e}")
+                            finally:
+                                logging.info(f"Stream closed for {backend_model.id}")
+        
+                        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                    else:
+                        response_json = response.model_dump()
+                        logging.info(f"Response for {backend_model.model_name}: {response_json}")
+                        return JSONResponse(content=response_json)
 
             except HTTPStatusError as e:
                 status_code = e.response.status_code
