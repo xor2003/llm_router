@@ -1,160 +1,165 @@
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import Request, Response
 from openai import APIStatusError
 
-from app.client import BaseGenerativeClient, LLMClient, RateLimitException
+from app.client import GeminiClient, LLMClient, OpenAIClient, RateLimitException
 from app.config import BackendModel
+from app.dependencies import get_llm_client
 
 
 @pytest.fixture
-def mock_backend_model():
+def mock_gemini_backend_model():
+    """Fixture for a Gemini backend model configuration."""
     return BackendModel(
-        id="test-model",
+        id="gemini-model",
         group_name="test-group",
-        model_name="gemini/test-model",
-        api_key="test-key",
-        api_base="https://test.example.com",
-        rpm=1000,
-        supports_tools=False,
-        supports_mcp=False,
+        model_name="gemini/gemini-pro",
+        api_key="test-gemini-key",
+        api_base="https://generativelanguage.googleapis.com/v1beta/models/",
+        provider="gemini",
     )
 
 
 @pytest.fixture
 def mock_openai_backend_model():
+    """Fixture for an OpenAI backend model configuration."""
     return BackendModel(
         id="openai-model",
         group_name="test-group",
         model_name="gpt-4",
-        api_key="test-key",
+        api_key="test-openai-key",
         api_base="https://api.openai.com/v1",
-        rpm=1000,
-        supports_tools=True,
-        supports_mcp=False,
+        provider="openai",
     )
 
 
 @pytest.mark.asyncio
-async def test_gemini_non_streaming_request(mock_backend_model):
-    client = LLMClient(mock_backend_model)
-    client.generative_client = AsyncMock(spec=BaseGenerativeClient)
-    client.generative_client.generate_content_async.return_value = MagicMock(
-        text="Test response",
-    )
+async def test_llm_client_with_gemini_non_streaming(mock_gemini_backend_model):
+    """Verify non-streaming requests for Gemini client."""
+    llm_client = get_llm_client(mock_gemini_backend_model)
+    mock_response = {"choices": [{"message": {"content": "Gemini response"}}]}
 
-    payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": False}
+    with patch.object(
+        llm_client.generative_client, "generate", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.return_value = mock_response
+        payload = {"messages": [{"role": "user", "content": "Hello"}]}
+        response = await llm_client.make_request(payload)
 
-    response = await client.make_request(payload)
-
-    assert response["model"] == "gemini/test-model"
-    assert response["choices"][0]["message"]["content"] == "Test response"
-    assert isinstance(response["created"], int)
-    client.generative_client.generate_content_async.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_gemini_streaming_request(mock_backend_model):
-    client = LLMClient(mock_backend_model)
-    client.generative_client = AsyncMock(spec=BaseGenerativeClient)
-    mock_stream = MagicMock()
-    mock_stream.__aiter__.return_value = [
-        MagicMock(text="Chunk1"),
-        MagicMock(text="Chunk2"),
-    ]
-    client.generative_client.generate_content_async.return_value = mock_stream
-
-    payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
-
-    response_stream = await client.make_request(payload)
-    chunks = [chunk async for chunk in response_stream]
-
-    assert len(chunks) == 2
-    assert chunks[0].text == "Chunk1"
-    assert chunks[1].text == "Chunk2"
+        assert response == mock_response
+        mock_generate.assert_awaited_once_with(payload)
 
 
 @pytest.mark.asyncio
-async def test_openai_compatible_request(mock_openai_backend_model):
-    client = LLMClient(mock_openai_backend_model)
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock(message=MagicMock(content="OpenAI response"))]
+async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model):
+    """Verify streaming requests for Gemini client."""
+    llm_client = get_llm_client(mock_gemini_backend_model)
+    mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
 
-    client.openai_client = AsyncMock()
-    client.openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
+    async def async_gen():
+        for item in mock_chunks:
+            yield item
 
-    payload = {"messages": [{"role": "user", "content": "Hello"}], "temperature": 0.7}
+    with patch.object(
+        llm_client.generative_client, "generate_stream", return_value=async_gen()
+    ) as mock_generate_stream:
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
+        response_stream = await llm_client.make_request(payload)
+        chunks = [chunk async for chunk in response_stream]
 
-    response = await client.make_request(payload)
-
-    assert response.choices[0].message.content == "OpenAI response"
-    client.openai_client.chat.completions.create.assert_awaited_with(
-        model="gpt-4",
-        messages=[{"role": "user", "content": "Hello"}],
-        temperature=0.7,
-    )
+        assert chunks == mock_chunks
+        mock_generate_stream.assert_called_once_with(payload)
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_handling(mock_openai_backend_model):
-    client = LLMClient(mock_openai_backend_model)
+async def test_llm_client_with_openai_non_streaming(mock_openai_backend_model):
+    """Verify non-streaming requests for OpenAI client."""
+    llm_client = get_llm_client(mock_openai_backend_model)
+    mock_response = {"choices": [{"message": {"content": "OpenAI response"}}]}
+
+    with patch.object(
+        llm_client.generative_client, "generate", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.return_value = mock_response
+        payload = {"messages": [{"role": "user", "content": "Hello"}]}
+        response = await llm_client.make_request(payload)
+
+        assert response == mock_response
+        mock_generate.assert_awaited_once_with(payload)
+
+
+@pytest.mark.asyncio
+async def test_llm_client_with_openai_streaming(mock_openai_backend_model):
+    """Verify streaming requests for OpenAI client."""
+    llm_client = get_llm_client(mock_openai_backend_model)
+    mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
+
+    async def async_gen():
+        for item in mock_chunks:
+            yield item
+
+    with patch.object(
+        llm_client.generative_client, "generate_stream", return_value=async_gen()
+    ) as mock_generate_stream:
+        payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
+        response_stream = await llm_client.make_request(payload)
+        chunks = [chunk async for chunk in response_stream]
+
+        assert chunks == mock_chunks
+        mock_generate_stream.assert_called_once_with(payload)
+
+
+def test_get_llm_client_instantiates_gemini_client(mock_gemini_backend_model):
+    """Ensure the correct client (Gemini) is instantiated based on config."""
+    with patch("app.dependencies.GeminiClient", spec=GeminiClient) as mock_gemini:
+        llm_client = get_llm_client(mock_gemini_backend_model)
+        assert isinstance(llm_client, LLMClient)
+        mock_gemini.assert_called_once_with(
+            model_name=mock_gemini_backend_model.model_name,
+            api_key=mock_gemini_backend_model.api_key,
+        )
+        assert llm_client.generative_client == mock_gemini.return_value
+
+
+def test_get_llm_client_instantiates_openai_client(mock_openai_backend_model):
+    """Ensure the correct client (OpenAI) is instantiated based on config."""
+    with patch("app.dependencies.OpenAIClient", spec=OpenAIClient) as mock_openai:
+        llm_client = get_llm_client(mock_openai_backend_model)
+        assert isinstance(llm_client, LLMClient)
+        mock_openai.assert_called_once_with(
+            model_name=mock_openai_backend_model.model_name,
+            api_key=mock_openai_backend_model.api_key,
+            api_base=mock_openai_backend_model.api_base,
+        )
+        assert llm_client.generative_client == mock_openai.return_value
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_exception_handling(mock_openai_backend_model):
+    """Verify that rate limit errors are correctly handled."""
+    llm_client = get_llm_client(mock_openai_backend_model)
 
     request = Request(method="POST", url="https://api.openai.com/v1/chat/completions")
     response = Response(
         status_code=429,
         request=request,
-        headers={"X-RateLimit-Reset": str(time.time() + 5)},
+        headers={"X-RateLimit-Reset": str(time.time() + 60)},
     )
-    mock_exception = APIStatusError(
-        message="Rate limit exceeded",
-        response=response,
-        body=None,
+    api_error = APIStatusError(
+        message="Rate limit exceeded", response=response, body=None
     )
 
-    client.openai_client.chat.completions.create = AsyncMock(side_effect=mock_exception)
+    with patch.object(
+        llm_client.generative_client, "generate", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.side_effect = api_error
+        with pytest.raises(RateLimitException) as exc_info:
+            await llm_client.make_request(
+                {"messages": [{"role": "user", "content": "Hello"}]}
+            )
 
-    with pytest.raises(RateLimitException) as exc_info:
-        await client.make_request({"messages": [{"role": "user", "content": "Hello"}]})
-
-    assert exc_info.value.reset_time > time.time()
-
-
-def test_mcp_connection_management(mock_openai_backend_model):
-    client = LLMClient(mock_openai_backend_model)
-
-    assert "telegram" in client.mcp_manager.servers
-    assert "weather" in client.mcp_manager.servers
-    assert client.mcp_manager.servers["telegram"] == "https://mcp.telegram.example.com"
-
-
-@pytest.mark.asyncio
-async def test_gemini_message_formatting(mock_backend_model):
-    client = LLMClient(mock_backend_model)
-    client.generative_client = AsyncMock(spec=BaseGenerativeClient)
-    client.generative_client.generate_content_async.return_value = MagicMock(
-        text="Test response",
-    )
-
-    payload = {
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": "Hello"},
-                    {"type": "text", "text": "World"},
-                ],
-            },
-        ],
-        "stream": False,
-    }
-
-    await client.make_request(payload)
-
-    call_args = client.generative_client.generate_content_async.call_args[0][0]
-    assert len(call_args) == 1
-    assert call_args[0]["role"] == "user"
-    assert len(call_args[0]["parts"]) == 2
-    assert call_args[0]["parts"][0]["text"] == "Hello"
-    assert call_args[0]["parts"][1]["text"] == "World"
+        assert exc_info.value.reset_time > time.time()
+        mock_generate.assert_awaited_once()

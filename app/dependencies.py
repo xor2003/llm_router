@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from app.client import LLMClient
+from app.client import GeminiClient, LLMClient, OpenAIClient
 from app.config import AppConfig, BackendModel, load_config
 from app.router import LLMRouter
 from app.state import ModelStateManager
@@ -12,10 +12,20 @@ def get_config() -> AppConfig:
     return load_config("config.yaml")
 
 
-# @lru_cache(maxsize=None)
 def get_llm_client(backend_model: BackendModel) -> LLMClient:
-    """Зависимость для получения HTTP клиента."""
-    return LLMClient(backend_model)
+    """Factory function to create the appropriate LLMClient."""
+    if backend_model.provider == "gemini":
+        generative_client = GeminiClient(
+            model_name=backend_model.model_name,
+            api_key=backend_model.api_key,
+        )
+    else:  # Default to openai
+        generative_client = OpenAIClient(
+            model_name=backend_model.model_name,
+            api_key=backend_model.api_key,
+            api_base=backend_model.api_base,
+        )
+    return LLMClient(generative_client, backend_model)
 
 
 @lru_cache(maxsize=1)

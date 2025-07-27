@@ -36,6 +36,7 @@ class BackendModel(BaseModel):
         default=False,
         description="Whether this model supports MCP protocol",
     )
+    provider: Literal["openai", "gemini"] = "openai"
 
 
 class ProxyServerConfig(BaseModel):
@@ -61,6 +62,13 @@ class EnvSettings(BaseSettings):
     OPENROUTER_KEY1: str
     OPENROUTER_KEY2: str
     OPENROUTER_KEY3: str
+    OPENROUTER_KEY4: str
+    OPENROUTER_KEY5: str
+    OPENROUTER_KEY6: str
+    OPENROUTER_KEY7: str
+    OPENROUTER_KEY8: str
+    OPENROUTER_KEY9: str
+    OPENROUTER_KEY10: str
 
     class Config:
         env_file = ".env"
@@ -122,24 +130,20 @@ def load_config(path: str) -> AppConfig:
             model_struct["rpm"] = litellm_params["rpm"]
 
             # Detect tool support based on model name
-            model_name = litellm_params["model"].lower()
+            model_name_str = litellm_params["model"]
             model_struct["supports_tools"] = any(
-                kw in model_name for kw in ("gpt-4", "claude", "command-r", "mixtral")
+                kw in model_name_str.lower()
+                for kw in ("gpt-4", "claude", "command-r", "mixtral")
             )
 
-            if litellm_params.get("api_base") is None and litellm_params[
-                "model"
-            ].startswith("gemini/"):
-                # Use the correct Gemini endpoint
-                model_struct["api_base"] = (
-                    "https://generativelanguage.googleapis.com/v1beta/models/"
-                )
-                model_struct["model_name"] = litellm_params["model"].split("/")[1]
+            if model_name_str.startswith("gemini/"):
+                model_struct["provider"] = "gemini"
+                model_struct["model_name"] = model_name_str.split("/")[1]
+                model_struct["api_base"] = None  # Not used by GeminiClient
             else:
-                model_struct["api_base"] = litellm_params["api_base"]
-                # Set model_name to the full model identifier
-                model_struct["model_name"] = litellm_params["model"]
-
+                model_struct["provider"] = "openai"
+                model_struct["model_name"] = model_name_str
+                model_struct["api_base"] = litellm_params.get("api_base")
             valid_models.append(model_struct)
 
         raw_config["model_list"] = valid_models

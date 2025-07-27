@@ -16,7 +16,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from httpx import HTTPStatusError
 
-from app.client import LLMClient, RateLimitException
+from app.client import GeminiClient, LLMClient, RateLimitException
 from app.config import AppConfig
 from app.dependencies import get_client_map, get_config, get_router, get_state_manager
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
@@ -145,12 +145,12 @@ async def chat_completions(
                 if stream:
                     full_response_text = ""
                     async for chunk in response:
-                        # Проверяем, от какой модели пришел чанк
-                        if client.gemini:
-                            # Это чанк от Gemini
+                        # Check which model the chunk came from
+                        if isinstance(client.generative_client, GeminiClient):
+                            # This is a chunk from Gemini
                             if hasattr(chunk, "text"):
                                 full_response_text += chunk.text
-                        # Это чанк от OpenAI-совместимой модели
+                        # This is a chunk from an OpenAI-compatible model
                         elif chunk.choices and chunk.choices[0].delta.content:
                             full_response_text += chunk.choices[0].delta.content
 
@@ -180,9 +180,9 @@ async def chat_completions(
                     }
                     state_manager.record_success(backend_model.id)
                     return JSONResponse(content=final_openai_response)
-                # Логика для не-потокового ответа
-                if client.gemini:
-                    # Ответ от Gemini уже в формате словаря OpenAI
+                # Logic for non-streamed response
+                if isinstance(client.generative_client, GeminiClient):
+                    # The response from Gemini is already in OpenAI dictionary format
                     response_json = response
                 else:
                     response_json = response.model_dump()
