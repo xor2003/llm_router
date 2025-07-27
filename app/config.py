@@ -25,14 +25,17 @@ class DeploymentModel(BaseModel):
 class BackendModel(BaseModel):
     """Represents a single backend model provider"""
 
-    id: str = Field(...) # Unique backend LLM ID for state tracking
-    group_name: str # LLM group name, e.g., "my-router"
-    model_name: str # Full model identifier
+    id: str = Field(...)  # Unique backend LLM ID for state tracking
+    group_name: str  # LLM group name, e.g., "my-router"
+    model_name: str  # Full model identifier
     api_key: str
     api_base: str | None = None
     rpm: int | None = None
-    supports_tools: bool = False # Whether this model supports tool calls
-    supports_mcp: bool = Field(default=False, description="Whether this model supports MCP protocol")
+    supports_tools: bool = False  # Whether this model supports tool calls
+    supports_mcp: bool = Field(
+        default=False,
+        description="Whether this model supports MCP protocol",
+    )
 
 
 class ProxyServerConfig(BaseModel):
@@ -81,11 +84,11 @@ def load_config(path: str) -> AppConfig:
             # Use group name from configuration
             group_name = model_definition["model_name"]
             litellm_params = model_definition.get("litellm_params", {})
-            
+
             # Skip models missing required 'model' parameter
             if "model" not in litellm_params:
                 logging.error(
-                    f"Model parameter missing for group {group_name}. Skipping."
+                    f"Model parameter missing for group {group_name}. Skipping.",
                 )
                 continue
 
@@ -93,7 +96,7 @@ def load_config(path: str) -> AppConfig:
 
             model_struct = {
                 "group_name": group_name,  # Set group name directly
-                "model_name": litellm_params["model"]  # Full model identifier
+                "model_name": litellm_params["model"],  # Full model identifier
             }
 
             if not api_key:
@@ -117,15 +120,16 @@ def load_config(path: str) -> AppConfig:
                 litellm_params["model"] + "/" + model_struct["api_key"][-4:]
             )
             model_struct["rpm"] = litellm_params["rpm"]
-            
+
             # Detect tool support based on model name
             model_name = litellm_params["model"].lower()
             model_struct["supports_tools"] = any(
-                kw in model_name
-                for kw in {"gpt-4", "claude", "command-r", "mixtral"}
+                kw in model_name for kw in ("gpt-4", "claude", "command-r", "mixtral")
             )
 
-            if litellm_params.get("api_base") is None and litellm_params["model"].startswith("gemini/"):
+            if litellm_params.get("api_base") is None and litellm_params[
+                "model"
+            ].startswith("gemini/"):
                 # Use the correct Gemini endpoint
                 model_struct["api_base"] = (
                     "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -148,7 +152,7 @@ def load_config(path: str) -> AppConfig:
             }
 
         # Load the MCP tool use prompt template
-        with open("prompts/mcp_tool_use_prompt.txt", "r") as f:
+        with open("prompts/mcp_tool_use_prompt.txt") as f:
             raw_config["mcp_tool_use_prompt_template"] = f.read()
 
         return AppConfig.parse_obj(raw_config)

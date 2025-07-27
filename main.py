@@ -1,36 +1,37 @@
 #!/usr/bin/env python3
-import sys
-import os
 import logging
+import os
+import sys
 import time
 
 # Add project root to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
+from typing import Dict
+
 import uvicorn
+from cachetools import TTLCache
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from httpx import HTTPStatusError
-from typing import Dict
-from cachetools import TTLCache
+
 from app.client import LLMClient, RateLimitException
 from app.config import AppConfig
-from app.dependencies import get_config, get_client_map, get_router, get_state_manager
+from app.dependencies import get_client_map, get_config, get_router, get_state_manager
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
 from app.router import LLMRouter
 from app.state import ModelStateManager
 
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI(title="LLM Proxy Server")
 
 # Create a TTL (Time To Live) cache.
 recent_prompts_cache = TTLCache(maxsize=1000, ttl=2)
+
 
 @app.get("/v1/models")
 @app.get("/models")
@@ -69,23 +70,29 @@ async def chat_completions(
                     else:
                         user_prompt_content = message.get("content", "")
                     break
-        
+
         is_standard_tool_request = "tools" in payload and payload.get("tools")
 
         if user_prompt_content in recent_prompts_cache and not is_standard_tool_request:
-            logging.warning(f"Duplicate prompt detected. Blocking likely title-generation request for: '{user_prompt_content}'")
+            logging.warning(
+                f"Duplicate prompt detected. Blocking likely title-generation request for: '{user_prompt_content}'",
+            )
             return JSONResponse(
                 status_code=409,
-                content={"error": "A primary tool-use request for this prompt is already in progress."}
+                content={
+                    "error": "A primary tool-use request for this prompt is already in progress.",
+                },
             )
 
         if is_standard_tool_request:
-            logging.info("Standard OpenAI tool request detected. Translating to XML workaround.")
+            logging.info(
+                "Standard OpenAI tool request detected. Translating to XML workaround.",
+            )
             recent_prompts_cache[user_prompt_content] = True
             client_tools = payload.get("tools", [])
             xml_tool_definitions = generate_xml_tool_definitions(client_tools)
             final_system_prompt = config.mcp_tool_use_prompt_template.format(
-                TOOL_DEFINITIONS=xml_tool_definitions
+                TOOL_DEFINITIONS=xml_tool_definitions,
             )
             payload.pop("tools", None)
             payload.pop("tool_choice", None)
@@ -96,7 +103,10 @@ async def chat_completions(
                     system_message_found = True
                     break
             if not system_message_found:
-                payload["messages"].insert(0, {"role": "system", "content": final_system_prompt})
+                payload["messages"].insert(
+                    0,
+                    {"role": "system", "content": final_system_prompt},
+                )
             logging.debug("Payload transformed with DYNAMIC tool definitions.")
         # ====================================================================
         # END: GENERALIZED LOGIC
@@ -108,7 +118,7 @@ async def chat_completions(
         retry_count = 0
         max_retries = 3
         last_error = None
-        
+
         while retry_count < max_retries:
             backend_model = router.get_next_backend_model(model_group)
             if not backend_model:
@@ -119,7 +129,7 @@ async def chat_completions(
 
             logging.info(
                 f"Attempt {retry_count+1}/{max_retries}: Using backend model id: {backend_model.id} "
-                f"(backend model: {backend_model.model_name})"
+                f"(backend model: {backend_model.model_name})",
             )
 
             try:
@@ -127,7 +137,7 @@ async def chat_completions(
                 payload_copy["model"] = backend_model.model_name
                 client = client_map[backend_model.id]
                 response = await client.make_request(payload_copy)
-                
+
                 # ====================================================================
                 # START: УНИВЕРСАЛЬНАЯ ЛОГИКА ОРКЕСТРАТОРА
                 # ====================================================================
@@ -138,51 +148,60 @@ async def chat_completions(
                         # Проверяем, от какой модели пришел чанк
                         if client.gemini:
                             # Это чанк от Gemini
-                            if hasattr(chunk, 'text'):
+                            if hasattr(chunk, "text"):
                                 full_response_text += chunk.text
-                        else:
-                            # Это чанк от OpenAI-совместимой модели
-                            if chunk.choices and chunk.choices[0].delta.content:
-                                full_response_text += chunk.choices[0].delta.content
-                    
-                    logging.debug(f"Full streamed response from model: {full_response_text}")
-                    
+                        # Это чанк от OpenAI-совместимой модели
+                        elif chunk.choices and chunk.choices[0].delta.content:
+                            full_response_text += chunk.choices[0].delta.content
+
+                    logging.debug(
+                        f"Full streamed response from model: {full_response_text}",
+                    )
+
                     # Дальнейшая логика парсинга XML остается прежней
                     tool_call = parse_xml_tool_call(full_response_text)
-                    
+
                     if tool_call:
                         logging.info(f"Tool call detected in stream: {tool_call}")
                         state_manager.record_success(backend_model.id)
                         return JSONResponse(content=tool_call, status_code=200)
-                    else:
-                        # Если вызова инструмента нет, возвращаем обычный текстовый ответ
-                        final_openai_response = {
-                            "id": f"chatcmpl-{time.time()}",
-                            "object": "chat.completion",
-                            "choices": [{"message": {"role": "assistant", "content": full_response_text}}]
-                        }
-                        state_manager.record_success(backend_model.id)
-                        return JSONResponse(content=final_openai_response)
-                else: 
-                    # Логика для не-потокового ответа
-                    if client.gemini:
-                        # Ответ от Gemini уже в формате словаря OpenAI
-                        response_json = response
-                    else:
-                        response_json = response.model_dump()
+                    # Если вызова инструмента нет, возвращаем обычный текстовый ответ
+                    final_openai_response = {
+                        "id": f"chatcmpl-{time.time()}",
+                        "object": "chat.completion",
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": full_response_text,
+                                },
+                            },
+                        ],
+                    }
+                    state_manager.record_success(backend_model.id)
+                    return JSONResponse(content=final_openai_response)
+                # Логика для не-потокового ответа
+                if client.gemini:
+                    # Ответ от Gemini уже в формате словаря OpenAI
+                    response_json = response
+                else:
+                    response_json = response.model_dump()
 
-                    content = response_json["choices"][0]["message"]["content"]
-                    tool_call = parse_xml_tool_call(content)
-                    
-                    if tool_call:
-                        logging.info(f"Tool call detected in non-streamed response: {tool_call}")
-                        state_manager.record_success(backend_model.id)
-                        return JSONResponse(content=tool_call, status_code=200)
-                    else:
-                        state_manager.record_success(backend_model.id)
-                        logging.info(f"Response for {backend_model.model_name}: {response_json}")
-                        return JSONResponse(content=response_json)
-                
+                content = response_json["choices"][0]["message"]["content"]
+                tool_call = parse_xml_tool_call(content)
+
+                if tool_call:
+                    logging.info(
+                        f"Tool call detected in non-streamed response: {tool_call}",
+                    )
+                    state_manager.record_success(backend_model.id)
+                    return JSONResponse(content=tool_call, status_code=200)
+                state_manager.record_success(backend_model.id)
+                logging.info(
+                    f"Response for {backend_model.model_name}: {response_json}",
+                )
+                return JSONResponse(content=response_json)
+
                 # ====================================================================
                 # END: УНИВЕРСАЛЬНАЯ ЛОГИКА ОРКЕСТРАТОРА
                 # ====================================================================
@@ -194,19 +213,27 @@ async def chat_completions(
                 last_error = e
                 if status_code == 429:
                     headers = e.response.headers
-                    reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
+                    reset_time = float(
+                        headers.get("X-RateLimit-Reset", time.time() + 60),
+                    )
                     if reset_time > 1e10:
                         reset_time /= 1000.0
                     state_manager.set_cooldown(backend_model.id, reset_time)
-                    logging.warning(f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}")
+                    logging.warning(
+                        f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}",
+                    )
                 else:
-                    logging.warning(f"Request failed with status {status_code} on backend model {backend_model.id}. Error: {e.response.text}")
+                    logging.warning(
+                        f"Request failed with status {status_code} on backend model {backend_model.id}. Error: {e.response.text}",
+                    )
                 retry_count += 1
                 continue
             except RateLimitException as e:
                 # ... (логика обработки ошибок)
                 state_manager.set_cooldown(backend_model.id, e.reset_time)
-                logging.warning(f"Rate limit error for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}")
+                logging.warning(
+                    f"Rate limit error for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}",
+                )
                 last_error = e
                 retry_count += 1
                 continue
@@ -214,15 +241,20 @@ async def chat_completions(
         # If all retries failed
         if last_error:
             if isinstance(last_error, HTTPStatusError):
-                raise HTTPException(status_code=last_error.response.status_code, detail=last_error.response.json())
-            else:
-                raise HTTPException(status_code=500, detail=str(last_error))
-        else:
-            raise HTTPException(status_code=503, detail="All models in group are overloaded or unavailable")
+                raise HTTPException(
+                    status_code=last_error.response.status_code,
+                    detail=last_error.response.json(),
+                )
+            raise HTTPException(status_code=500, detail=str(last_error))
+        raise HTTPException(
+            status_code=503,
+            detail="All models in group are overloaded or unavailable",
+        )
 
     except Exception as e:
         logging.exception("Internal server error occurred")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 if __name__ == "__main__":
     config: AppConfig = get_config()

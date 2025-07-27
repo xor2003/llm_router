@@ -1,10 +1,13 @@
-import pytest
-from unittest.mock import AsyncMock, MagicMock
-from app.client import LLMClient, RateLimitException, BaseGenerativeClient
-from app.config import BackendModel
 import time
-from openai import APIStatusError
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import Request, Response
+from openai import APIStatusError
+
+from app.client import BaseGenerativeClient, LLMClient, RateLimitException
+from app.config import BackendModel
+
 
 @pytest.fixture
 def mock_backend_model():
@@ -16,8 +19,9 @@ def mock_backend_model():
         api_base="https://test.example.com",
         rpm=1000,
         supports_tools=False,
-        supports_mcp=False
+        supports_mcp=False,
     )
+
 
 @pytest.fixture
 def mock_openai_backend_model():
@@ -29,7 +33,7 @@ def mock_openai_backend_model():
         api_base="https://api.openai.com/v1",
         rpm=1000,
         supports_tools=True,
-        supports_mcp=False
+        supports_mcp=False,
     )
 
 
@@ -37,12 +41,11 @@ def mock_openai_backend_model():
 async def test_gemini_non_streaming_request(mock_backend_model):
     client = LLMClient(mock_backend_model)
     client.generative_client = AsyncMock(spec=BaseGenerativeClient)
-    client.generative_client.generate_content_async.return_value = MagicMock(text="Test response")
+    client.generative_client.generate_content_async.return_value = MagicMock(
+        text="Test response",
+    )
 
-    payload = {
-        "messages": [{"role": "user", "content": "Hello"}],
-        "stream": False
-    }
+    payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": False}
 
     response = await client.make_request(payload)
 
@@ -51,18 +54,19 @@ async def test_gemini_non_streaming_request(mock_backend_model):
     assert isinstance(response["created"], int)
     client.generative_client.generate_content_async.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_gemini_streaming_request(mock_backend_model):
     client = LLMClient(mock_backend_model)
     client.generative_client = AsyncMock(spec=BaseGenerativeClient)
     mock_stream = MagicMock()
-    mock_stream.__aiter__.return_value = [MagicMock(text="Chunk1"), MagicMock(text="Chunk2")]
+    mock_stream.__aiter__.return_value = [
+        MagicMock(text="Chunk1"),
+        MagicMock(text="Chunk2"),
+    ]
     client.generative_client.generate_content_async.return_value = mock_stream
 
-    payload = {
-        "messages": [{"role": "user", "content": "Hello"}],
-        "stream": True
-    }
+    payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
 
     response_stream = await client.make_request(payload)
     chunks = [chunk async for chunk in response_stream]
@@ -71,28 +75,27 @@ async def test_gemini_streaming_request(mock_backend_model):
     assert chunks[0].text == "Chunk1"
     assert chunks[1].text == "Chunk2"
 
+
 @pytest.mark.asyncio
 async def test_openai_compatible_request(mock_openai_backend_model):
     client = LLMClient(mock_openai_backend_model)
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=MagicMock(content="OpenAI response"))]
-    
+
     client.openai_client = AsyncMock()
     client.openai_client.chat.completions.create = AsyncMock(return_value=mock_response)
-    
-    payload = {
-        "messages": [{"role": "user", "content": "Hello"}],
-        "temperature": 0.7
-    }
-    
+
+    payload = {"messages": [{"role": "user", "content": "Hello"}], "temperature": 0.7}
+
     response = await client.make_request(payload)
-    
+
     assert response.choices[0].message.content == "OpenAI response"
     client.openai_client.chat.completions.create.assert_awaited_with(
         model="gpt-4",
         messages=[{"role": "user", "content": "Hello"}],
-        temperature=0.7
+        temperature=0.7,
     )
+
 
 @pytest.mark.asyncio
 async def test_rate_limit_handling(mock_openai_backend_model):
@@ -102,9 +105,13 @@ async def test_rate_limit_handling(mock_openai_backend_model):
     response = Response(
         status_code=429,
         request=request,
-        headers={"X-RateLimit-Reset": str(time.time() + 5)}
+        headers={"X-RateLimit-Reset": str(time.time() + 5)},
     )
-    mock_exception = APIStatusError(message="Rate limit exceeded", response=response, body=None)
+    mock_exception = APIStatusError(
+        message="Rate limit exceeded",
+        response=response,
+        body=None,
+    )
 
     client.openai_client.chat.completions.create = AsyncMock(side_effect=mock_exception)
 
@@ -113,28 +120,34 @@ async def test_rate_limit_handling(mock_openai_backend_model):
 
     assert exc_info.value.reset_time > time.time()
 
+
 def test_mcp_connection_management(mock_openai_backend_model):
     client = LLMClient(mock_openai_backend_model)
-    
+
     assert "telegram" in client.mcp_manager.servers
     assert "weather" in client.mcp_manager.servers
     assert client.mcp_manager.servers["telegram"] == "https://mcp.telegram.example.com"
+
 
 @pytest.mark.asyncio
 async def test_gemini_message_formatting(mock_backend_model):
     client = LLMClient(mock_backend_model)
     client.generative_client = AsyncMock(spec=BaseGenerativeClient)
-    client.generative_client.generate_content_async.return_value = MagicMock(text="Test response")
+    client.generative_client.generate_content_async.return_value = MagicMock(
+        text="Test response",
+    )
 
     payload = {
-        "messages": [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Hello"},
-                {"type": "text", "text": "World"}
-            ]
-        }],
-        "stream": False
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "text", "text": "World"},
+                ],
+            },
+        ],
+        "stream": False,
     }
 
     await client.make_request(payload)
