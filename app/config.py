@@ -1,5 +1,5 @@
 import logging
-from typing import Literal
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -54,6 +54,11 @@ class AppConfig(BaseModel):
     model_list: list[BackendModel]
     router_settings: RouterSettings
     mcp_tool_use_prompt_template: str
+
+    # For backwards compatibility with Pydantic v1
+    @classmethod
+    def parse_obj(cls, obj: Any) -> "AppConfig":
+        return cls.model_validate(obj)
 
 
 # Загрузка .env файла
@@ -159,7 +164,7 @@ def load_config(path: str) -> AppConfig:
         with open("prompts/mcp_tool_use_prompt.txt") as f:
             raw_config["mcp_tool_use_prompt_template"] = f.read()
 
-        return AppConfig.parse_obj(raw_config)
+        return AppConfig.model_validate(raw_config)
     except (FileNotFoundError, ValidationError, TypeError) as e:
         logging.exception(f"Ошибка загрузки или валидации конфигурации: {e}")
         raise

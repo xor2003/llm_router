@@ -1,7 +1,8 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any, Dict, List
 
 from openai import APIStatusError, AsyncOpenAI
 
@@ -10,33 +11,34 @@ from app.router import LLMRouter
 
 
 class BaseGenerativeClient(ABC):
-    """
-    Abstract base class for a generative AI client.
-    """
+    """Abstract base class for a generative AI client."""
 
     @abstractmethod
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate a non-streaming response.
+        """Generate a non-streaming response.
+
         Args:
             payload: The request payload, conforming to a standard OpenAI-like format.
+
         Returns:
             The response from the generative model, in a standard OpenAI-like format.
+
         """
-        pass
 
     @abstractmethod
     async def generate_stream(
-        self, payload: Dict[str, Any]
+        self,
+        payload: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Generate a streaming response.
+        """Generate a streaming response.
+
         Args:
             payload: The request payload, conforming to a standard OpenAI-like format.
+
         Yields:
             Chunks of the response from the generative model.
+
         """
-        pass
 
 
 class GeminiClient(BaseGenerativeClient):
@@ -65,7 +67,7 @@ class GeminiClient(BaseGenerativeClient):
 
             if parts:
                 contents.append(
-                    {"role": role, "parts": [{"text": text} for text in parts]}
+                    {"role": role, "parts": [{"text": text} for text in parts]},
                 )
         return contents
 
@@ -83,7 +85,7 @@ class GeminiClient(BaseGenerativeClient):
                         "content": response.text,
                     },
                     "finish_reason": "stop",
-                }
+                },
             ],
             "usage": {
                 "prompt_tokens": 0,
@@ -98,7 +100,8 @@ class GeminiClient(BaseGenerativeClient):
         return self._translate_gemini_response_to_openai(response)
 
     async def generate_stream(
-        self, payload: Dict[str, Any]
+        self,
+        payload: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         # For Gemini, we need to accumulate the full response when using XML tool workaround
         if payload.get("stream") is False:
@@ -117,24 +120,14 @@ class OpenAIClient(BaseGenerativeClient):
     def __init__(self, model_name: str, api_key: str, api_base: str):
         # Normalize model names to base versions
         if model_name.startswith("openrouter/"):
-            model_name = model_name[len("openrouter/"):]
-        
-        # Handle GPT model variants
-        if "gpt-4" in model_name:
-            self.model_name = "gpt-4"
-        elif "gpt-3.5" in model_name:
-            self.model_name = "gpt-3.5"
-        else:
-            self.model_name = model_name
-            
+            model_name = model_name[len("openrouter/") :]
+        self.model_name = model_name
+        self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
+
     def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize model name in payload to base version"""
         payload = payload.copy()
-        if "model" in payload:
-            if "gpt-4" in payload["model"]:
-                payload["model"] = "gpt-4"
-            elif "gpt-3.5" in payload["model"]:
-                payload["model"] = "gpt-3.5"
+
         return payload
 
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,7 +136,8 @@ class OpenAIClient(BaseGenerativeClient):
         return await self.client.chat.completions.create(**payload)
 
     async def generate_stream(
-        self, payload: Dict[str, Any]
+        self,
+        payload: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         payload = self._normalize_payload(payload)
         payload["model"] = self.model_name
@@ -151,15 +145,14 @@ class OpenAIClient(BaseGenerativeClient):
         stream = await self.client.chat.completions.create(**payload)
         async for chunk in stream:
             yield chunk
-            
-        self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         payload["model"] = self.model_name
         return await self.client.chat.completions.create(**payload)
 
     async def generate_stream(
-        self, payload: Dict[str, Any]
+        self,
+        payload: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         payload["model"] = self.model_name
         payload["stream"] = True
@@ -220,8 +213,7 @@ class LLMClient:
         try:
             if stream:
                 return self.generative_client.generate_stream(payload)
-            else:
-                return await self.generative_client.generate(payload)
+            return await self.generative_client.generate(payload)
         except APIStatusError as e:
             self._handle_api_error(e)
         except Exception as e:

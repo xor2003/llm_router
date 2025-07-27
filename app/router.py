@@ -87,7 +87,9 @@ class LLMRouter:
         return None
 
     def _get_preferred_order(
-        self, models: list[BackendModel], tools: Optional[list]
+        self,
+        models: list[BackendModel],
+        tools: Optional[list],
     ) -> list[BackendModel]:
         """Returns models sorted by tool support if tools are requested"""
         if tools:
@@ -95,13 +97,18 @@ class LLMRouter:
         return models
 
     def _update_counter(
-        self, group_name: str, current_index: int, model_count: int
+        self,
+        group_name: str,
+        current_index: int,
+        model_count: int,
     ) -> None:
         """Updates the round-robin counter for the group"""
         self._group_counters[group_name] = (current_index + 1) % model_count
 
     def _select_model(
-        self, model: BackendModel, model_group: str
+        self,
+        model: BackendModel,
+        model_group: str,
     ) -> BackendModel | None:
         """Finalizes model selection and adds MCP support flag"""
         try:

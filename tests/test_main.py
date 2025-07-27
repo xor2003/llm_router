@@ -1,10 +1,11 @@
-import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, MagicMock
 
-from main import app
+import pytest
+from fastapi.testclient import TestClient
+
 from app.config import BackendModel
-from app.dependencies import get_router, get_client_map
+from app.dependencies import get_client_map, get_router
+from main import app
 
 
 # Mock the dependencies
@@ -36,8 +37,7 @@ def mock_supported_model():
 
 
 def test_tool_call_with_workaround(client, mock_unsupported_model):
-    """
-    Verify that the XML tool call workaround is applied for models
+    """Verify that the XML tool call workaround is applied for models
     that do not support native tool calling.
     """
     # Mock the router to return our unsupported model
@@ -48,7 +48,7 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
     mock_llm_client = MagicMock()
     mock_response_obj = MagicMock()
     mock_response_dict = {
-        "choices": [{"message": {"content": "<echo><message>test</message></echo>"}}]
+        "choices": [{"message": {"content": "<echo><message>test</message></echo>"}}],
     }
     mock_response_obj.model_dump.return_value = mock_response_dict
     mock_llm_client.make_request = AsyncMock(return_value=mock_response_obj)
@@ -74,8 +74,7 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
 
 
 def test_tool_call_native_passthrough(client, mock_supported_model):
-    """
-    Verify that requests are passed through without modification for models
+    """Verify that requests are passed through without modification for models
     that support native tool calling.
     """
     mock_router = MagicMock()
@@ -95,11 +94,11 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
                                 "name": "echo",
                                 "arguments": '{"message": "test"}',
                             },
-                        }
-                    ]
-                }
-            }
-        ]
+                        },
+                    ],
+                },
+            },
+        ],
     }
     mock_response_obj.model_dump.return_value = mock_response_dict
     mock_llm_client.make_request = AsyncMock(return_value=mock_response_obj)

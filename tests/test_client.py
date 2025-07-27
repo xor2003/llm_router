@@ -1,5 +1,5 @@
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import Request, Response
@@ -43,7 +43,6 @@ def mock_router():
     return MagicMock(spec=LLMRouter)
 
 
-
 @pytest.mark.asyncio
 async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model, mock_router):
     """Verify streaming requests for Gemini client."""
@@ -55,7 +54,9 @@ async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model, mock_
             yield item
 
     with patch.object(
-        llm_client.generative_client, "generate_stream", return_value=async_gen()
+        llm_client.generative_client,
+        "generate_stream",
+        return_value=async_gen(),
     ) as mock_generate_stream:
         payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
         response_stream = await llm_client.make_request(payload)
@@ -67,14 +68,17 @@ async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model, mock_
 
 @pytest.mark.asyncio
 async def test_llm_client_with_openai_non_streaming(
-    mock_openai_backend_model, mock_router
+    mock_openai_backend_model,
+    mock_router,
 ):
     """Verify non-streaming requests for OpenAI client."""
     llm_client = get_llm_client(mock_openai_backend_model, mock_router)
     mock_response = {"choices": [{"message": {"content": "OpenAI response"}}]}
 
     with patch.object(
-        llm_client.generative_client, "generate", new_callable=AsyncMock
+        llm_client.generative_client,
+        "generate",
+        new_callable=AsyncMock,
     ) as mock_generate:
         mock_generate.return_value = mock_response
         payload = {"messages": [{"role": "user", "content": "Hello"}]}
@@ -95,7 +99,9 @@ async def test_llm_client_with_openai_streaming(mock_openai_backend_model, mock_
             yield item
 
     with patch.object(
-        llm_client.generative_client, "generate_stream", return_value=async_gen()
+        llm_client.generative_client,
+        "generate_stream",
+        return_value=async_gen(),
     ) as mock_generate_stream:
         payload = {"messages": [{"role": "user", "content": "Hello"}], "stream": True}
         response_stream = await llm_client.make_request(payload)
@@ -106,7 +112,8 @@ async def test_llm_client_with_openai_streaming(mock_openai_backend_model, mock_
 
 
 def test_get_llm_client_instantiates_gemini_client(
-    mock_gemini_backend_model, mock_router
+    mock_gemini_backend_model,
+    mock_router,
 ):
     """Ensure the correct client (Gemini) is instantiated based on config."""
     with patch("app.dependencies.GeminiClient", spec=GeminiClient) as mock_gemini:
@@ -120,7 +127,8 @@ def test_get_llm_client_instantiates_gemini_client(
 
 
 def test_get_llm_client_instantiates_openai_client(
-    mock_openai_backend_model, mock_router
+    mock_openai_backend_model,
+    mock_router,
 ):
     """Ensure the correct client (OpenAI) is instantiated based on config."""
     with patch("app.dependencies.OpenAIClient", spec=OpenAIClient) as mock_openai:
@@ -146,16 +154,20 @@ async def test_rate_limit_exception_handling(mock_openai_backend_model, mock_rou
         headers={"X-RateLimit-Reset": str(time.time() + 60)},
     )
     api_error = APIStatusError(
-        message="Rate limit exceeded", response=response, body=None
+        message="Rate limit exceeded",
+        response=response,
+        body=None,
     )
 
     with patch.object(
-        llm_client.generative_client, "generate", new_callable=AsyncMock
+        llm_client.generative_client,
+        "generate",
+        new_callable=AsyncMock,
     ) as mock_generate:
         mock_generate.side_effect = api_error
         with pytest.raises(RateLimitException) as exc_info:
             await llm_client.make_request(
-                {"messages": [{"role": "user", "content": "Hello"}]}
+                {"messages": [{"role": "user", "content": "Hello"}]},
             )
 
         assert exc_info.value.reset_time > time.time()
