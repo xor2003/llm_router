@@ -5,6 +5,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_settings import BaseSettings
 
+logger = logging.getLogger(__name__)
 
 # Модели Pydantic для структуры config.yaml
 class LiteLLMParams(BaseModel):
@@ -85,7 +86,7 @@ env_settings = EnvSettings()
 
 def load_config(path: str) -> AppConfig:
     """Загружает, парсит и валидирует конфигурацию из YAML файла."""
-    logging.info(f"Загрузка конфигурации из {path}...")
+    logger.info(f"Загрузка конфигурации из {path}...")
     try:
         with open(path) as f:
             raw_config = yaml.safe_load(f)
@@ -100,7 +101,7 @@ def load_config(path: str) -> AppConfig:
 
             # Skip models missing required 'model' parameter
             if "model" not in litellm_params:
-                logging.error(
+                logger.error(
                     f"`model` parameter missing for group {group_name}. Skipping.",
                 )
                 continue
@@ -113,7 +114,7 @@ def load_config(path: str) -> AppConfig:
             }
 
             if not api_key:
-                logging.warning(
+                logger.warning(
                     f"API ключ для модели {litellm_params.get('model', 'unknown')} отсутствует. Пропускаем.",
                 )
                 continue
@@ -123,7 +124,7 @@ def load_config(path: str) -> AppConfig:
                 # Use the env_settings object instead of os.getenv
                 model_struct["api_key"] = getattr(env_settings, env_var, None)
                 if not model_struct["api_key"]:
-                    logging.error(
+                    logger.error(
                         f"Переменная окружения {env_var} не найдена. Пропускаем модель.",
                     )
                     continue
@@ -166,5 +167,5 @@ def load_config(path: str) -> AppConfig:
 
         return AppConfig.model_validate(raw_config)
     except (FileNotFoundError, ValidationError, TypeError) as e:
-        logging.exception(f"Ошибка загрузки или валидации конфигурации: {e}")
+        logger.exception(f"Ошибка загрузки или валидации конфигурации: {e}")
         raise

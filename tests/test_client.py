@@ -120,6 +120,7 @@ def test_get_llm_client_instantiates_gemini_client(
         llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
         assert isinstance(llm_client, LLMClient)
         mock_gemini.assert_called_once_with(
+            model_id=mock_gemini_backend_model.id,
             model_name=mock_gemini_backend_model.model_name,
             api_key=mock_gemini_backend_model.api_key,
         )
@@ -135,6 +136,7 @@ def test_get_llm_client_instantiates_openai_client(
         llm_client = get_llm_client(mock_openai_backend_model, mock_router)
         assert isinstance(llm_client, LLMClient)
         mock_openai.assert_called_once_with(
+            model_id=mock_openai_backend_model.id,
             model_name=mock_openai_backend_model.model_name,
             api_key=mock_openai_backend_model.api_key,
             api_base=mock_openai_backend_model.api_base,

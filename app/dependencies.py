@@ -16,11 +16,13 @@ def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
     """Factory function to create the appropriate LLMClient."""
     if backend_model.provider == "gemini":
         generative_client = GeminiClient(
+            model_id=backend_model.id,
             model_name=backend_model.model_name,
             api_key=backend_model.api_key,
         )
     else:  # Default to openai
         generative_client = OpenAIClient(
+            model_id=backend_model.id,
             model_name=backend_model.model_name,
             api_key=backend_model.api_key,
             api_base=backend_model.api_base,

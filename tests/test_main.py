@@ -67,19 +67,21 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
         "model": "test-group",
         "messages": [{"role": "user", "content": "test"}],
         "tools": [{"type": "function", "function": {"name": "echo", "parameters": {}}}],
-        "stream": True, # Указываем, что клиент запрашивает поток
+        "stream": True,  # Указываем, что клиент запрашивает поток
     }
 
     response = client.post("/v1/chat/completions", json=payload)
 
     assert response.status_code == 200
-    
+
     # --- ИЗМЕНЕНИЕ №2: Правильно читаем поток SSE ---
     # Ответ теперь - это поток Server-Sent Events, его нужно парсить по-другому.
-    lines = response.text.strip().split('\n')
+    lines = response.text.strip().split("\n")
     # Нас интересует только строка с данными, не пустые строки и не "[DONE]"
-    data_line = [line for line in lines if line.startswith('data:') and "[DONE]" not in line][0]
-    
+    data_line = [
+        line for line in lines if line.startswith("data:") and "[DONE]" not in line
+    ][0]
+
     # Убираем "data: " и парсим JSON
     response_json = json.loads(data_line.replace("data: ", ""))
 
@@ -115,7 +117,7 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
                         },
                     ],
                 },
-                "finish_reason": "tool_calls"
+                "finish_reason": "tool_calls",
             },
         ],
     }
@@ -132,7 +134,7 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
         "model": "test-group",
         "messages": [{"role": "user", "content": "test"}],
         "tools": [{"type": "function", "function": {"name": "echo", "parameters": {}}}],
-        "stream": False, # Указываем, что это не-потоковый запрос
+        "stream": False,  # Указываем, что это не-потоковый запрос
     }
 
     response = client.post("/v1/chat/completions", json=payload)
@@ -141,9 +143,8 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
     assert response.status_code == 200
     response_json = response.json()
     assert "tool_calls" in response_json["choices"][0]["message"]
-    
+
     # Проверяем, что `make_request` был вызван с оригинальным payload
     mock_llm_client.make_request.assert_awaited_once()
     sent_payload = mock_llm_client.make_request.call_args[0][0]
     assert "tools" in sent_payload
-    

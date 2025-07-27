@@ -5,6 +5,8 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any, Dict
+import logging
+import google.generativeai as genai
 
 import google.api_core.exceptions
 from openai import APIStatusError, AsyncOpenAI, BadRequestError
@@ -28,9 +30,10 @@ class BaseGenerativeClient(ABC):
 
 
 class GeminiClient(BaseGenerativeClient):
-    def __init__(self, model_name: str, api_key: str):
-        import google.generativeai as genai
-
+    def __init__(self, model_id: str, model_name: str, api_key: str):
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.model_id = model_id
+        
         genai.configure(api_key=api_key)
         self.client = genai.GenerativeModel(model_name)
         self.model_name = model_name
@@ -98,7 +101,7 @@ class GeminiClient(BaseGenerativeClient):
             # ПРОВЕРЯЕМ, есть ли в чанке контент, ПРЕЖДЕ чем пытаться его обработать.
             # Пустые чанки (только с finish_reason) будут проигнорированы.
             if not chunk.parts:
-                logging.debug(f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}")
+                self.logger.debug(f"Ignoring empty/metadata chunk from Gemini stream. {chunk}")
                 continue
             
             # Если проверка пройдена, чанк содержит текст и его безопасно обрабатывать.
@@ -107,7 +110,10 @@ class GeminiClient(BaseGenerativeClient):
 
 
 class OpenAIClient(BaseGenerativeClient):
-    def __init__(self, model_name: str, api_key: str, api_base: str):
+    def __init__(self, model_id: str, model_name: str, api_key: str, api_base: str):
+        self.model_id = model_id
+        self.logger = logging.getLogger(self.__class__.__name__)
+        
         if model_name.startswith("openrouter/"):
             model_name = model_name[len("openrouter/") :]
         self.model_name = model_name
@@ -143,15 +149,18 @@ class LLMClient:
         backend_model: BackendModel,
         router: LLMRouter,
     ):
+        import logging
+        
         self.generative_client = generative_client
         self.backend_model = backend_model
-        self.id = self.backend_model.id
+        self.model_id = self.backend_model.id
         self.model_name = self.backend_model.model_name
         self.router = router
+        self.logger = logging.getLogger(self.__class__.__name__)
 
     async def make_request(self, payload: dict[str, Any]) -> Any:
-        logging.info(f"Making request to {self.model_name}")
-        logging.debug(f"Request payload: {payload}")
+        self.logger.info(f"Making request to {self.model_id}")
+        self.logger.debug(f"Request payload: {payload}")
         stream = payload.get("stream", False)
 
         try:
@@ -167,7 +176,7 @@ class LLMClient:
         if e.status_code == 429:
             self._handle_rate_limit_error(e)
         else:
-            logging.error(f"Unhandled API error for {self.model_name}: {e.status_code}")
+            self.logger.error(f"Unhandled API error for {self.model_id}: {e.status_code}")
             raise e
 
     def _handle_rate_limit_error(self, e: APIStatusError) -> None:
@@ -175,14 +184,14 @@ class LLMClient:
         reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
         if reset_time > 1e10:
             reset_time /= 1000.0
-        logging.warning(
-            f"Rate limit error for {self.model_name}: Reset at {time.ctime(reset_time)}",
+        self.logger.warning(
+            f"Rate limit error for {self.model_id}: Reset at {time.ctime(reset_time)}",
         )
         raise RateLimitException(reset_time)
 
     def _handle_generic_error(self, e: Exception) -> None:
         if isinstance(e, google.api_core.exceptions.ResourceExhausted):
-            logging.warning(f"Gemini rate limit error for {self.model_name}: {e}")
+            self.logger.warning(f"Gemini rate limit error for {self.model_id}: {e}")
             try:
                 error_json = json.loads(e.message)
                 retry_info = None
@@ -195,12 +204,12 @@ class LLMClient:
                     delay_str = retry_info["retryDelay"]
                     delay_seconds = int(re.sub(r"\D", "", delay_str))
                     reset_time = time.time() + delay_seconds
-                    logging.info(f"Gemini API requested a specific retry delay of {delay_seconds}s.")
+                    self.logger.info(f"Gemini API requested a specific retry delay of {delay_seconds}s.")
                     raise RateLimitException(reset_time) from e
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as parse_error:
-                logging.warning(f"Could not parse Gemini retry delay, using default: {parse_error}")
+                self.logger.warning(f"Could not parse Gemini retry delay, using default: {parse_error}")
             
             raise RateLimitException(time.time() + 60) from e
 
-        logging.exception(f"Error making request to {self.model_name}: {e}")
+        self.logger.exception(f"Error making request to {self.model_name}: {e}")
         raise e

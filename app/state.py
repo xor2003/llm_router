@@ -1,5 +1,5 @@
-import logging
 import time
+import logging
 
 
 class ModelState:
@@ -16,8 +16,8 @@ class ModelStateManager:
     """Manages state for all model backend_models."""
 
     def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
         self.states: dict[str, ModelState] = {}
-        self.logger = logging.getLogger(__name__)
 
     def initialize_models(self, model_ids: list[str]):
         """Initialize state for multiple models at once"""

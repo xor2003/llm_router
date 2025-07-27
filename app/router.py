@@ -14,6 +14,7 @@ class LLMRouter:
         state_manager: ModelStateManager,
         settings: RouterSettings,
     ):
+        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self._state_manager = state_manager
         self._model_groups: dict[str, list[BackendModel]] = {}
         self._group_counters: dict[str, int] = {}
@@ -25,33 +26,33 @@ class LLMRouter:
         ]
         state_manager.initialize_models(model_ids)
 
-        logging.info("Router initialized.")
+        self.logger.info("Router initialized.")
 
     def _build_groups(self, backend_models: list[BackendModel]):
-        logging.info("Building model groups...")
-        logging.info(f"Total backend models: {len(backend_models)}")
+        self.logger.info("Building model groups...")
+        self.logger.info(f"Total backend models: {len(backend_models)}")
 
         for model in backend_models:
             # Use the model's group_name as the group name
             group_name = model.group_name
-            logging.info(
+            self.logger.info(
                 f"Processing backend model: id={model.id}, group_name={group_name}, backend model={model.model_name}",
             )
 
             if group_name not in self._model_groups:
-                logging.info(f"Creating new group for model: {group_name}")
+                self.logger.info(f"Creating new group for model: {group_name}")
                 self._model_groups[group_name] = []
 
             self._model_groups[group_name].append(model)
-            logging.info(
+            self.logger.info(
                 f"Added backend model to group '{group_name}': {model.id}",
             )
 
         # Initialize counters for each group
-        logging.info(f"Initialized groups: {list(self._model_groups.keys())}")
+        self.logger.info(f"Initialized groups: {list(self._model_groups.keys())}")
         for group_name in self._model_groups.keys():
             self._group_counters[group_name] = 0
-            logging.info(f"Initialized counter for group: {group_name}")
+            self.logger.info(f"Initialized counter for group: {group_name}")
 
     def get_next_backend_model(
         self,
@@ -65,7 +66,7 @@ class LLMRouter:
         """
         models_in_group = self._model_groups.get(model_group, [])
         if not models_in_group:
-            logging.warning(
+            self.logger.warning(
                 f"Attempted to get model from non-existent group: {model_group}",
             )
             return None
@@ -81,7 +82,7 @@ class LLMRouter:
                 self._update_counter(model_group, current_index, len(preferred_order))
                 return self._select_model(model, model_group)
 
-        logging.error(
+        self.logger.error(
             f"No available models in group {model_group} after checking all options.",
         )
         return None
@@ -112,11 +113,11 @@ class LLMRouter:
     ) -> BackendModel | None:
         """Finalizes model selection and adds MCP support flag"""
         try:
-            logging.info(
-                f"Selected model: {model.model_name} from group {model_group}",
+            self.logger.info(
+                f"Selected model: {model.id} from group {model_group}",
             )
             model.supports_mcp = True
             return model
         except Exception as e:
-            logging.exception(f"Failed to select model {model.id}: {e!s}")
+            self.logger.exception(f"Failed to select model {model.id}: {e!s}")
             return None
