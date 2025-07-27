@@ -1,6 +1,5 @@
 import logging
-import re
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from .config import BackendModel, RouterSettings
 from .state import ModelStateManager
@@ -72,37 +71,45 @@ class LLMRouter:
             return None
 
         start_index = self._group_counters.get(model_group, 0)
-
-        # Create a preferred order: tool-supporting models first, then the rest
-        preferred_order = sorted(
-            models_in_group,
-            key=lambda m: m.supports_tools,
-            reverse=True,
-        )
+        preferred_order = self._get_preferred_order(models_in_group, tools)
 
         for i in range(len(preferred_order)):
             current_index = (start_index + i) % len(preferred_order)
             model = preferred_order[current_index]
 
             if self._state_manager.is_available(model.id):
-                logging.info(
-                    f"Selected model: {model.model_name} from group {model_group}",
-                )
-                # Update counter for the next request to ensure round-robin
-                self._group_counters[model_group] = (current_index + 1) % len(
-                    preferred_order,
-                )
-
-                try:
-                    # Add MCP support flag to selected model
-                    model.supports_mcp = True
-                    return model
-                except Exception as e:
-                    logging.exception(f"Failed to select model {model.id}: {e!s}")
-                    return None
+                self._update_counter(model_group, current_index, len(preferred_order))
+                return self._select_model(model, model_group)
 
         logging.error(
             f"No available models in group {model_group} after checking all options.",
         )
         return None
 
+    def _get_preferred_order(
+        self, models: list[BackendModel], tools: Optional[list]
+    ) -> list[BackendModel]:
+        """Returns models sorted by tool support if tools are requested"""
+        if tools:
+            return sorted(models, key=lambda m: m.supports_tools, reverse=True)
+        return models
+
+    def _update_counter(
+        self, group_name: str, current_index: int, model_count: int
+    ) -> None:
+        """Updates the round-robin counter for the group"""
+        self._group_counters[group_name] = (current_index + 1) % model_count
+
+    def _select_model(
+        self, model: BackendModel, model_group: str
+    ) -> BackendModel | None:
+        """Finalizes model selection and adds MCP support flag"""
+        try:
+            logging.info(
+                f"Selected model: {model.model_name} from group {model_group}",
+            )
+            model.supports_mcp = True
+            return model
+        except Exception as e:
+            logging.exception(f"Failed to select model {model.id}: {e!s}")
+            return None

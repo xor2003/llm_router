@@ -1,7 +1,7 @@
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List
 
 from openai import APIStatusError, AsyncOpenAI
 
@@ -166,7 +166,7 @@ class LLMClient:
         self,
         generative_client: BaseGenerativeClient,
         backend_model: BackendModel,
-        router: Optional[LLMRouter] = None,
+        router: LLMRouter,
     ):
         self.generative_client = generative_client
         self.backend_model = backend_model
@@ -187,20 +187,29 @@ class LLMClient:
             if stream:
                 return self.generative_client.generate_stream(payload)
             else:
-                response = await self.generative_client.generate(payload)
-                return response
+                return await self.generative_client.generate(payload)
         except APIStatusError as e:
-            if e.status_code == 429:
-                headers = e.response.headers
-                reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
-                if reset_time > 1e10:
-                    reset_time /= 1000.0
-                logging.warning(
-                    f"Rate limit error for {self.model_name}: Reset at {time.ctime(reset_time)}",
-                )
-                raise RateLimitException(reset_time)
+            self._handle_api_error(e)
+        except Exception as e:
+            self._handle_generic_error(e)
+
+    def _handle_api_error(self, e: APIStatusError) -> None:
+        if e.status_code == 429:
+            self._handle_rate_limit_error(e)
+        else:
             logging.exception(f"API error for {self.model_name}: {e}")
             raise e
-        except Exception as e:
-            logging.exception(f"Error making request to {self.model_name}: {e}")
-            raise e
+
+    def _handle_rate_limit_error(self, e: APIStatusError) -> None:
+        headers = e.response.headers
+        reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
+        if reset_time > 1e10:
+            reset_time /= 1000.0
+        logging.warning(
+            f"Rate limit error for {self.model_name}: Reset at {time.ctime(reset_time)}",
+        )
+        raise RateLimitException(reset_time)
+
+    def _handle_generic_error(self, e: Exception) -> None:
+        logging.exception(f"Error making request to {self.model_name}: {e}")
+        raise e

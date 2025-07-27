@@ -140,7 +140,9 @@ async def chat_completions(
                         payload_copy["messages"].insert(
                             0, {"role": "system", "content": final_system_prompt}
                         )
-                    logging.debug("Payload transformed with DYNAMIC tool definitions and forced non-streaming.")
+                    logging.debug(
+                        "Payload transformed with DYNAMIC tool definitions and forced non-streaming."
+                    )
 
                     # Forced non-streaming handling for XML workaround
                     response = await client.make_request(payload_copy)
@@ -150,51 +152,65 @@ async def chat_completions(
                     else:
                         # For OpenAI, get the response content
                         # Handle both regular and async generator responses
-                        if hasattr(response, 'model_dump'):
+                        if hasattr(response, "model_dump"):
                             response_content = response.model_dump()
-                        elif hasattr(response, '__aiter__'):
+                        elif hasattr(response, "__aiter__"):
                             # Collect async generator into a string
                             full_response_text = ""
                             async for chunk in response:
                                 if chunk.choices and chunk.choices[0].delta.content:
                                     full_response_text += chunk.choices[0].delta.content
                             response_content = {
-                                "choices": [{
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": full_response_text
+                                "choices": [
+                                    {
+                                        "message": {
+                                            "role": "assistant",
+                                            "content": full_response_text,
+                                        }
                                     }
-                                }]
+                                ]
                             }
                         else:
                             response_content = response
 
-                    content = response_content.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    content = (
+                        response_content.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
+                    )
                     tool_call = parse_xml_tool_call(content)
 
                     if tool_call:
                         logging.info(f"XML tool call detected: {tool_call}")
                         state_manager.record_success(backend_model.id)
                         # Return a compliant OpenAI tool call response
-                        return JSONResponse(content={
-                            "id": f"chatcmpl-{time.time()}",
-                            "object": "chat.completion",
-                            "choices": [{
-                                "index": 0,
-                                "message": {
-                                    "role": "assistant",
-                                    "tool_calls": [{
-                                        "id": f"call_{time.time()}",
-                                        "type": "function",
-                                        "function": {
-                                            "name": tool_call["tool_name"],
-                                            "arguments": str(tool_call["parameters"])
-                                        }
-                                    }]
-                                },
-                                "finish_reason": "tool_calls"
-                            }]
-                        })
+                        return JSONResponse(
+                            content={
+                                "id": f"chatcmpl-{time.time()}",
+                                "object": "chat.completion",
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "message": {
+                                            "role": "assistant",
+                                            "tool_calls": [
+                                                {
+                                                    "id": f"call_{time.time()}",
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": tool_call["tool_name"],
+                                                        "arguments": str(
+                                                            tool_call["parameters"]
+                                                        ),
+                                                    },
+                                                }
+                                            ],
+                                        },
+                                        "finish_reason": "tool_calls",
+                                    }
+                                ],
+                            }
+                        )
                     else:
                         # Fallback to standard response
                         state_manager.record_success(backend_model.id)
@@ -210,16 +226,16 @@ async def chat_completions(
                     async def event_stream():
                         async for chunk in response:
                             # Serialize chunk to JSON and format as SSE
-                            if hasattr(chunk, 'model_dump_json'):
+                            if hasattr(chunk, "model_dump_json"):
                                 data = chunk.model_dump_json()
                             else:
                                 import json
+
                                 data = json.dumps(chunk)
                             yield f"data: {data}\n\n"
-                    
+
                     return StreamingResponse(
-                        event_stream(),
-                        media_type="text/event-stream"
+                        event_stream(), media_type="text/event-stream"
                     )
                 else:
                     # Handle Gemini responses differently since they return dicts
@@ -228,22 +244,26 @@ async def chat_completions(
                         return JSONResponse(content=response)
                     else:
                         # Handle OpenAI-style responses
-                        if hasattr(response, 'model_dump'):
+                        if hasattr(response, "model_dump"):
                             return JSONResponse(content=response.model_dump())
-                        elif hasattr(response, '__aiter__'):
+                        elif hasattr(response, "__aiter__"):
                             # Collect async generator into a string
                             full_response_text = ""
                             async for chunk in response:
                                 if chunk.choices and chunk.choices[0].delta.content:
                                     full_response_text += chunk.choices[0].delta.content
-                            return JSONResponse(content={
-                                "choices": [{
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": full_response_text
-                                    }
-                                }]
-                            })
+                            return JSONResponse(
+                                content={
+                                    "choices": [
+                                        {
+                                            "message": {
+                                                "role": "assistant",
+                                                "content": full_response_text,
+                                            }
+                                        }
+                                    ]
+                                }
+                            )
                         else:
                             return JSONResponse(content=response)
 

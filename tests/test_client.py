@@ -1,5 +1,5 @@
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from httpx import Request, Response
@@ -8,6 +8,7 @@ from openai import APIStatusError
 from app.client import GeminiClient, LLMClient, OpenAIClient, RateLimitException
 from app.config import BackendModel
 from app.dependencies import get_llm_client
+from app.router import LLMRouter
 
 
 @pytest.fixture
@@ -36,10 +37,18 @@ def mock_openai_backend_model():
     )
 
 
+@pytest.fixture
+def mock_router():
+    """Fixture for a mock router."""
+    return MagicMock(spec=LLMRouter)
+
+
 @pytest.mark.asyncio
-async def test_llm_client_with_gemini_non_streaming(mock_gemini_backend_model):
+async def test_llm_client_with_gemini_non_streaming(
+    mock_gemini_backend_model, mock_router
+):
     """Verify non-streaming requests for Gemini client."""
-    llm_client = get_llm_client(mock_gemini_backend_model)
+    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
     mock_response = {"choices": [{"message": {"content": "Gemini response"}}]}
 
     with patch.object(
@@ -54,9 +63,9 @@ async def test_llm_client_with_gemini_non_streaming(mock_gemini_backend_model):
 
 
 @pytest.mark.asyncio
-async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model):
+async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model, mock_router):
     """Verify streaming requests for Gemini client."""
-    llm_client = get_llm_client(mock_gemini_backend_model)
+    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
     mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
 
     async def async_gen():
@@ -75,9 +84,11 @@ async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model):
 
 
 @pytest.mark.asyncio
-async def test_llm_client_with_openai_non_streaming(mock_openai_backend_model):
+async def test_llm_client_with_openai_non_streaming(
+    mock_openai_backend_model, mock_router
+):
     """Verify non-streaming requests for OpenAI client."""
-    llm_client = get_llm_client(mock_openai_backend_model)
+    llm_client = get_llm_client(mock_openai_backend_model, mock_router)
     mock_response = {"choices": [{"message": {"content": "OpenAI response"}}]}
 
     with patch.object(
@@ -92,9 +103,9 @@ async def test_llm_client_with_openai_non_streaming(mock_openai_backend_model):
 
 
 @pytest.mark.asyncio
-async def test_llm_client_with_openai_streaming(mock_openai_backend_model):
+async def test_llm_client_with_openai_streaming(mock_openai_backend_model, mock_router):
     """Verify streaming requests for OpenAI client."""
-    llm_client = get_llm_client(mock_openai_backend_model)
+    llm_client = get_llm_client(mock_openai_backend_model, mock_router)
     mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
 
     async def async_gen():
@@ -112,10 +123,12 @@ async def test_llm_client_with_openai_streaming(mock_openai_backend_model):
         mock_generate_stream.assert_called_once_with(payload)
 
 
-def test_get_llm_client_instantiates_gemini_client(mock_gemini_backend_model):
+def test_get_llm_client_instantiates_gemini_client(
+    mock_gemini_backend_model, mock_router
+):
     """Ensure the correct client (Gemini) is instantiated based on config."""
     with patch("app.dependencies.GeminiClient", spec=GeminiClient) as mock_gemini:
-        llm_client = get_llm_client(mock_gemini_backend_model)
+        llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
         assert isinstance(llm_client, LLMClient)
         mock_gemini.assert_called_once_with(
             model_name=mock_gemini_backend_model.model_name,
@@ -124,10 +137,12 @@ def test_get_llm_client_instantiates_gemini_client(mock_gemini_backend_model):
         assert llm_client.generative_client == mock_gemini.return_value
 
 
-def test_get_llm_client_instantiates_openai_client(mock_openai_backend_model):
+def test_get_llm_client_instantiates_openai_client(
+    mock_openai_backend_model, mock_router
+):
     """Ensure the correct client (OpenAI) is instantiated based on config."""
     with patch("app.dependencies.OpenAIClient", spec=OpenAIClient) as mock_openai:
-        llm_client = get_llm_client(mock_openai_backend_model)
+        llm_client = get_llm_client(mock_openai_backend_model, mock_router)
         assert isinstance(llm_client, LLMClient)
         mock_openai.assert_called_once_with(
             model_name=mock_openai_backend_model.model_name,
@@ -138,9 +153,9 @@ def test_get_llm_client_instantiates_openai_client(mock_openai_backend_model):
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_exception_handling(mock_openai_backend_model):
+async def test_rate_limit_exception_handling(mock_openai_backend_model, mock_router):
     """Verify that rate limit errors are correctly handled."""
-    llm_client = get_llm_client(mock_openai_backend_model)
+    llm_client = get_llm_client(mock_openai_backend_model, mock_router)
 
     request = Request(method="POST", url="https://api.openai.com/v1/chat/completions")
     response = Response(

@@ -12,7 +12,7 @@ def get_config() -> AppConfig:
     return load_config("config.yaml")
 
 
-def get_llm_client(backend_model: BackendModel) -> LLMClient:
+def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
     """Factory function to create the appropriate LLMClient."""
     if backend_model.provider == "gemini":
         generative_client = GeminiClient(
@@ -25,7 +25,7 @@ def get_llm_client(backend_model: BackendModel) -> LLMClient:
             api_key=backend_model.api_key,
             api_base=backend_model.api_base,
         )
-    return LLMClient(generative_client, backend_model)
+    return LLMClient(generative_client, backend_model, router)
 
 
 @lru_cache(maxsize=1)

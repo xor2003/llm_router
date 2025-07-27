@@ -34,9 +34,11 @@ def generate_xml_tool_definitions(tools: list) -> str:
 
     return "\n\n".join(xml_definitions)
 
+
 import json
 import re
 from typing import Any, Dict, Optional
+
 
 def parse_xml_tool_call(text: str) -> Optional[Dict[str, Any]]:
     """Parses the XML tool call from the LLM's response text.
