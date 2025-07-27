@@ -115,9 +115,43 @@ class GeminiClient(BaseGenerativeClient):
 
 class OpenAIClient(BaseGenerativeClient):
     def __init__(self, model_name: str, api_key: str, api_base: str):
-        self.model_name = model_name
-        if self.model_name.startswith("openrouter/"):
-            self.model_name = self.model_name[len("openrouter/") :]
+        # Normalize model names to base versions
+        if model_name.startswith("openrouter/"):
+            model_name = model_name[len("openrouter/"):]
+        
+        # Handle GPT model variants
+        if "gpt-4" in model_name:
+            self.model_name = "gpt-4"
+        elif "gpt-3.5" in model_name:
+            self.model_name = "gpt-3.5"
+        else:
+            self.model_name = model_name
+            
+    def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize model name in payload to base version"""
+        payload = payload.copy()
+        if "model" in payload:
+            if "gpt-4" in payload["model"]:
+                payload["model"] = "gpt-4"
+            elif "gpt-3.5" in payload["model"]:
+                payload["model"] = "gpt-3.5"
+        return payload
+
+    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        payload = self._normalize_payload(payload)
+        payload["model"] = self.model_name
+        return await self.client.chat.completions.create(**payload)
+
+    async def generate_stream(
+        self, payload: Dict[str, Any]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        payload = self._normalize_payload(payload)
+        payload["model"] = self.model_name
+        payload["stream"] = True
+        stream = await self.client.chat.completions.create(**payload)
+        async for chunk in stream:
+            yield chunk
+            
         self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:

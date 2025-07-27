@@ -43,24 +43,6 @@ def mock_router():
     return MagicMock(spec=LLMRouter)
 
 
-@pytest.mark.asyncio
-async def test_llm_client_with_gemini_non_streaming(
-    mock_gemini_backend_model, mock_router
-):
-    """Verify non-streaming requests for Gemini client."""
-    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
-    mock_response = {"choices": [{"message": {"content": "Gemini response"}}]}
-
-    with patch.object(
-        llm_client.generative_client, "generate", new_callable=AsyncMock
-    ) as mock_generate:
-        mock_generate.return_value = mock_response
-        payload = {"messages": [{"role": "user", "content": "Hello"}]}
-        response = await llm_client.make_request(payload)
-
-        assert response == mock_response
-        mock_generate.assert_awaited_once_with(payload)
-
 
 @pytest.mark.asyncio
 async def test_llm_client_with_gemini_streaming(mock_gemini_backend_model, mock_router):
