@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +12,8 @@ from main import app
 # Mock the dependencies
 @pytest.fixture
 def client():
+    # Сбрасываем переопределения зависимостей перед каждым тестом
+    app.dependency_overrides = {}
     return TestClient(app)
 
 
@@ -40,18 +43,20 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
     """Verify that the XML tool call workaround is applied for models
     that do not support native tool calling.
     """
-    # Mock the router to return our unsupported model
     mock_router = MagicMock()
     mock_router.get_next_backend_model.return_value = mock_unsupported_model
 
-    # Mock the client to return a pre-canned XML tool call response
+    # --- ИЗМЕНЕНИЕ №1: Мок должен возвращать АСИНХРОННЫЙ ГЕНЕРАТОР ---
+    # Наш код теперь ожидает поток (генератор), а не простой объект.
+    async def mock_stream_generator():
+        # Имитируем, что модель возвращает XML по частям
+        yield {"choices": [{"delta": {"content": "<echo>"}}]}
+        yield {"choices": [{"delta": {"content": "<message>test</message>"}}]}
+        yield {"choices": [{"delta": {"content": "</echo>"}}]}
+
     mock_llm_client = MagicMock()
-    mock_response_obj = MagicMock()
-    mock_response_dict = {
-        "choices": [{"message": {"content": "<echo><message>test</message></echo>"}}],
-    }
-    mock_response_obj.model_dump.return_value = mock_response_dict
-    mock_llm_client.make_request = AsyncMock(return_value=mock_response_obj)
+    # `make_request` теперь возвращает асинхронный генератор
+    mock_llm_client.make_request = AsyncMock(return_value=mock_stream_generator())
 
     client_map = {mock_unsupported_model.id: mock_llm_client}
 
@@ -62,15 +67,28 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
         "model": "test-group",
         "messages": [{"role": "user", "content": "test"}],
         "tools": [{"type": "function", "function": {"name": "echo", "parameters": {}}}],
+        "stream": True, # Указываем, что клиент запрашивает поток
     }
 
     response = client.post("/v1/chat/completions", json=payload)
 
     assert response.status_code == 200
-    response_json = response.json()
-    tool_call = response_json["choices"][0]["message"]["tool_calls"][0]
+    
+    # --- ИЗМЕНЕНИЕ №2: Правильно читаем поток SSE ---
+    # Ответ теперь - это поток Server-Sent Events, его нужно парсить по-другому.
+    lines = response.text.strip().split('\n')
+    # Нас интересует только строка с данными, не пустые строки и не "[DONE]"
+    data_line = [line for line in lines if line.startswith('data:') and "[DONE]" not in line][0]
+    
+    # Убираем "data: " и парсим JSON
+    response_json = json.loads(data_line.replace("data: ", ""))
+
+    # Проверяем, что в ответе есть правильно сформированный tool_call
+    tool_call = response_json["choices"][0]["delta"]["tool_calls"][0]
     assert tool_call["function"]["name"] == "echo"
-    assert "'message': 'test'" in tool_call["function"]["arguments"]
+    # Аргументы теперь - это строка JSON, поэтому парсим и ее
+    arguments = json.loads(tool_call["function"]["arguments"])
+    assert arguments["message"] == "test"
 
 
 def test_tool_call_native_passthrough(client, mock_supported_model):
@@ -80,8 +98,8 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
     mock_router = MagicMock()
     mock_router.get_next_backend_model.return_value = mock_supported_model
 
-    mock_llm_client = MagicMock()
-    mock_response_obj = MagicMock()
+    # --- ИЗМЕНЕНИЕ №3: Мок должен возвращать СЛОВАРЬ, а не MagicMock ---
+    # Это исправит ошибку `TypeError: Object of type MagicMock is not JSON serializable`
     mock_response_dict = {
         "choices": [
             {
@@ -97,11 +115,13 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
                         },
                     ],
                 },
+                "finish_reason": "tool_calls"
             },
         ],
     }
-    mock_response_obj.model_dump.return_value = mock_response_dict
-    mock_llm_client.make_request = AsyncMock(return_value=mock_response_obj)
+    mock_llm_client = MagicMock()
+    # `make_request` теперь возвращает словарь
+    mock_llm_client.make_request = AsyncMock(return_value=mock_response_dict)
 
     client_map = {mock_supported_model.id: mock_llm_client}
 
@@ -112,14 +132,18 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
         "model": "test-group",
         "messages": [{"role": "user", "content": "test"}],
         "tools": [{"type": "function", "function": {"name": "echo", "parameters": {}}}],
+        "stream": False, # Указываем, что это не-потоковый запрос
     }
 
     response = client.post("/v1/chat/completions", json=payload)
 
+    # Теперь тест должен проходить
     assert response.status_code == 200
     response_json = response.json()
     assert "tool_calls" in response_json["choices"][0]["message"]
-    # Assert that the original payload was passed to the client
+    
+    # Проверяем, что `make_request` был вызван с оригинальным payload
     mock_llm_client.make_request.assert_awaited_once()
     sent_payload = mock_llm_client.make_request.call_args[0][0]
     assert "tools" in sent_payload
+    

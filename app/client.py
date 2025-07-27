@@ -1,10 +1,13 @@
+import json
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from typing import Any, Dict, List
+from typing import Any, Dict
 
-from openai import APIStatusError, AsyncOpenAI
+import google.api_core.exceptions
+from openai import APIStatusError, AsyncOpenAI, BadRequestError
 
 from app.config import BackendModel
 from app.router import LLMRouter
@@ -15,30 +18,13 @@ class BaseGenerativeClient(ABC):
 
     @abstractmethod
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate a non-streaming response.
-
-        Args:
-            payload: The request payload, conforming to a standard OpenAI-like format.
-
-        Returns:
-            The response from the generative model, in a standard OpenAI-like format.
-
-        """
+        """Generate a non-streaming response."""
 
     @abstractmethod
     async def generate_stream(
-        self,
-        payload: Dict[str, Any],
+        self, payload: Dict[str, Any]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Generate a streaming response.
-
-        Args:
-            payload: The request payload, conforming to a standard OpenAI-like format.
-
-        Yields:
-            Chunks of the response from the generative model.
-
-        """
+        """Generate a streaming response."""
 
 
 class GeminiClient(BaseGenerativeClient):
@@ -49,29 +35,44 @@ class GeminiClient(BaseGenerativeClient):
         self.client = genai.GenerativeModel(model_name)
         self.model_name = model_name
 
-    def _translate_payload_to_gemini(self, payload: Dict[str, Any]) -> List[Dict]:
+    def _translate_payload_to_gemini(self, payload: Dict[str, Any]) -> list[Dict]:
         contents = []
         for msg in payload.get("messages", []):
             role = "user" if msg["role"] == "user" else "model"
             parts = []
-            if isinstance(msg.get("content"), list):
-                for part in msg["content"]:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                for part in content:
                     if isinstance(part, dict) and part.get("type") == "text":
                         parts.append(part["text"])
                     elif isinstance(part, str):
                         parts.append(part)
-            else:
-                content = msg.get("content", "")
-                if content:
-                    parts.append(content)
+            elif content:
+                parts.append(content)
 
             if parts:
-                contents.append(
-                    {"role": role, "parts": [{"text": text} for text in parts]},
-                )
+                contents.append({"role": role, "parts": [{"text": text} for text in parts]})
         return contents
 
-    def _translate_gemini_response_to_openai(self, response) -> Dict[str, Any]:
+    def _translate_gemini_chunk_to_openai(self, chunk) -> Dict[str, Any]:
+        return {
+            "id": f"chatcmpl-chunk-{time.time()}",
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": self.model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": chunk.text},
+                    "finish_reason": None,
+                }
+            ],
+        }
+
+    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        contents = self._translate_payload_to_gemini(payload)
+        response = await self.client.generate_content_async(contents)
+        # Транслируем полный ответ в формат OpenAI
         return {
             "id": f"chatcmpl-{time.time()}",
             "object": "chat.completion",
@@ -80,112 +81,50 @@ class GeminiClient(BaseGenerativeClient):
             "choices": [
                 {
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": response.text,
-                    },
+                    "message": {"role": "assistant", "content": response.text},
                     "finish_reason": "stop",
-                },
+                }
             ],
-            "usage": {
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-                "total_tokens": 0,
-            },
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        contents = self._translate_payload_to_gemini(payload)
-        response = self.client.generate_content(contents)
-        return self._translate_gemini_response_to_openai(response)
-
     async def generate_stream(
-        self,
-        payload: Dict[str, Any],
+        self, payload: Dict[str, Any]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        # For Gemini, we need to accumulate the full response when using XML tool workaround
-        if payload.get("stream") is False:
-            # Handle as non-streaming request
-            response = await self.generate(payload)
-            yield response
-        else:
-            # Normal streaming behavior
-            contents = self._translate_payload_to_gemini(payload)
-            stream = self.client.generate_content(contents, stream=True)
-            for chunk in stream:
-                yield self._translate_gemini_response_to_openai(chunk)
+        contents = self._translate_payload_to_gemini(payload)
+        stream = await self.client.generate_content_async(contents, stream=True)
+        async for chunk in stream:
+            yield self._translate_gemini_chunk_to_openai(chunk)
 
 
 class OpenAIClient(BaseGenerativeClient):
     def __init__(self, model_name: str, api_key: str, api_base: str):
-        # Normalize model names to base versions
         if model_name.startswith("openrouter/"):
             model_name = model_name[len("openrouter/") :]
         self.model_name = model_name
         self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
-    def _normalize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize model name in payload to base version"""
-        payload = payload.copy()
-
-        return payload
-
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload = self._normalize_payload(payload)
-        payload["model"] = self.model_name
-        return await self.client.chat.completions.create(**payload)
+        payload_copy = payload.copy()
+        payload_copy["model"] = self.model_name
+        response = await self.client.chat.completions.create(**payload_copy)
+        return response.model_dump()
 
     async def generate_stream(
-        self,
-        payload: Dict[str, Any],
+        self, payload: Dict[str, Any]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        payload = self._normalize_payload(payload)
-        payload["model"] = self.model_name
-        payload["stream"] = True
-        stream = await self.client.chat.completions.create(**payload)
+        payload_copy = payload.copy()
+        payload_copy["model"] = self.model_name
+        payload_copy["stream"] = True
+        stream = await self.client.chat.completions.create(**payload_copy)
         async for chunk in stream:
-            yield chunk
-
-    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        payload["model"] = self.model_name
-        return await self.client.chat.completions.create(**payload)
-
-    async def generate_stream(
-        self,
-        payload: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
-        payload["model"] = self.model_name
-        payload["stream"] = True
-        stream = await self.client.chat.completions.create(**payload)
-        async for chunk in stream:
-            yield chunk
+            yield chunk.model_dump()
 
 
 class RateLimitException(Exception):
     def __init__(self, reset_time: float):
         self.reset_time = reset_time
         super().__init__(f"Rate limit exceeded. Reset at {reset_time}")
-
-
-class MCPConnectionManager:
-    """Manages connections to MCP servers"""
-
-    def __init__(self):
-        self.servers = {}
-
-    def add_server(self, server_name: str, endpoint: str):
-        self.servers[server_name] = endpoint
-
-    async def call_tool(
-        self,
-        server_name: str,
-        tool_name: str,
-        params: Dict[str, str],
-    ) -> Any:
-        """Calls an MCP tool and returns the result"""
-        if server_name not in self.servers:
-            raise ValueError(f"Unknown MCP server: {server_name}")
-        return f"MCP tool {tool_name} executed on {server_name} with params {params}"
 
 
 class LLMClient:
@@ -200,12 +139,8 @@ class LLMClient:
         self.id = self.backend_model.id
         self.model_name = self.backend_model.model_name
         self.router = router
-        self.mcp_manager = MCPConnectionManager()
-        self.mcp_manager.add_server("telegram", "https://mcp.telegram.example.com")
-        self.mcp_manager.add_server("weather", "https://mcp.weather.example.com")
 
     async def make_request(self, payload: dict[str, Any]) -> Any:
-        """Send request to the LLM backend_model endpoint with error forwarding"""
         logging.info(f"Making request to {self.model_name}")
         logging.debug(f"Request payload: {payload}")
         stream = payload.get("stream", False)
@@ -223,7 +158,7 @@ class LLMClient:
         if e.status_code == 429:
             self._handle_rate_limit_error(e)
         else:
-            logging.exception(f"API error for {self.model_name}: {e}")
+            logging.error(f"Unhandled API error for {self.model_name}: {e.status_code}")
             raise e
 
     def _handle_rate_limit_error(self, e: APIStatusError) -> None:
@@ -237,5 +172,32 @@ class LLMClient:
         raise RateLimitException(reset_time)
 
     def _handle_generic_error(self, e: Exception) -> None:
+        # --- НАЧАЛО ИЗМЕНЕНИЙ ДЛЯ GEMINI 429 ---
+        # Проверяем, является ли ошибка ошибкой исчерпания ресурсов от Google
+        if isinstance(e, google.api_core.exceptions.ResourceExhausted):
+            logging.warning(f"Gemini rate limit error for {self.model_name}: {e}")
+            try:
+                # Пытаемся распарсить JSON из сообщения об ошибке
+                error_json = json.loads(e.message)
+                retry_info = None
+                for detail in error_json.get("error", {}).get("details", []):
+                    if detail.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
+                        retry_info = detail
+                        break
+                
+                if retry_info and "retryDelay" in retry_info:
+                    delay_str = retry_info["retryDelay"]  # e.g., "30s"
+                    delay_seconds = int(re.sub(r"\D", "", delay_str))
+                    reset_time = time.time() + delay_seconds
+                    logging.info(f"Gemini API requested a specific retry delay of {delay_seconds}s.")
+                    raise RateLimitException(reset_time) from e
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as parse_error:
+                logging.warning(f"Could not parse Gemini retry delay, using default: {parse_error}")
+            
+            # Если парсинг не удался, используем стандартный кулдаун
+            raise RateLimitException(time.time() + 60) from e
+        # --- КОНЕЦ ИЗМЕНЕНИЙ ДЛЯ GEMINI 429 ---
+
         logging.exception(f"Error making request to {self.model_name}: {e}")
         raise e
+    

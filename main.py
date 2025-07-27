@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import logging
 import os
 import sys
@@ -17,7 +18,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
 
-from app.client import GeminiClient, LLMClient, RateLimitException
+from app.client import LLMClient, RateLimitException
 from app.config import AppConfig
 from app.dependencies import get_client_map, get_config, get_router, get_state_manager
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
@@ -29,15 +30,12 @@ log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
 app = FastAPI(title="LLM Proxy Server")
-
-# Create a TTL (Time To Live) cache.
 recent_prompts_cache = TTLCache(maxsize=1000, ttl=2)
 
 
 @app.get("/v1/models")
 @app.get("/models")
 async def list_models(config: AppConfig = Depends(get_config)):
-    """Return load balancing model names from configuration"""
     model_names = list({model.model_name for model in config.model_list})
     return {"models": model_names}
 
@@ -51,43 +49,32 @@ async def chat_completions(
     state_manager: ModelStateManager = Depends(get_state_manager),
     config: AppConfig = Depends(get_config),
 ):
-    """Proxy endpoint for LLM requests in OpenAI format"""
     try:
         payload = await request.json()
         model_group = payload.get("model")
         stream = payload.get("stream", False)
-
         logging.debug(f"Incoming request for model group '{model_group}': {payload}")
 
-        # ====================================================================
-        # START: GENERALIZED PROTOCOL ADAPTER & REQUEST FILTERING
-        # ====================================================================
         user_prompt_content = ""
         if payload.get("messages"):
             for message in payload["messages"]:
                 if message["role"] == "user":
-                    if isinstance(message.get("content"), list):
-                        user_prompt_content = message["content"][0].get("text", "")
-                    else:
-                        user_prompt_content = message.get("content", "")
+                    content = message.get("content", "")
+                    user_prompt_content = (
+                        content[0]["text"] if isinstance(content, list) else content
+                    )
                     break
 
         is_standard_tool_request = "tools" in payload and payload.get("tools")
 
         if user_prompt_content in recent_prompts_cache and not is_standard_tool_request:
             logging.warning(
-                f"Duplicate prompt detected. Blocking likely title-generation request for: '{user_prompt_content}'",
+                f"Duplicate prompt detected. Blocking likely title-generation request for: '{user_prompt_content}'"
             )
             return JSONResponse(
                 status_code=409,
-                content={
-                    "error": "A primary tool-use request for this prompt is already in progress.",
-                },
+                content={"error": "A primary tool-use request is already in progress."},
             )
-
-        # ====================================================================
-        # END: GENERALIZED LOGIC
-        # ====================================================================
 
         if not model_group:
             raise HTTPException(status_code=400, detail="Model parameter is required")
@@ -106,30 +93,25 @@ async def chat_completions(
 
             logging.info(
                 f"Attempt {retry_count+1}/{max_retries}: Using backend model id: {backend_model.id} "
-                f"(backend model: {backend_model.model_name})",
+                f"(backend model: {backend_model.model_name})"
             )
 
             try:
                 payload_copy = payload.copy()
-                payload_copy["model"] = backend_model.model_name
                 client = client_map[backend_model.id]
 
-                # Conditional MCP Workaround Logic
                 if is_standard_tool_request and not backend_model.supports_tools:
-                    logging.info(
-                        "Applying XML tool workaround for model that does not support native tools.",
-                    )
+                    # --- XML WORKAROUND LOGIC ---
+                    logging.info("Applying XML tool workaround...")
                     recent_prompts_cache[user_prompt_content] = True
+                    
                     client_tools = payload_copy.pop("tools", [])
                     payload_copy.pop("tool_choice", None)
-                    # Force non-streaming for XML workaround to simplify response handling
-                    payload_copy["stream"] = False
-
                     xml_tool_definitions = generate_xml_tool_definitions(client_tools)
                     final_system_prompt = config.mcp_tool_use_prompt_template.format(
-                        TOOL_DEFINITIONS=xml_tool_definitions,
+                        TOOL_DEFINITIONS=xml_tool_definitions
                     )
-
+                    
                     system_message_found = False
                     for message in payload_copy["messages"]:
                         if message["role"] == "system":
@@ -137,177 +119,101 @@ async def chat_completions(
                             system_message_found = True
                             break
                     if not system_message_found:
-                        payload_copy["messages"].insert(
-                            0,
-                            {"role": "system", "content": final_system_prompt},
-                        )
-                    logging.debug(
-                        "Payload transformed with DYNAMIC tool definitions and forced non-streaming.",
-                    )
+                        payload_copy["messages"].insert(0, {"role": "system", "content": final_system_prompt})
+                    
+                    logging.debug("Payload transformed for XML workaround.")
 
-                    # Forced non-streaming handling for XML workaround
-                    response = await client.make_request(payload_copy)
-                    # For Gemini, response is already a dict
-                    if isinstance(client.generative_client, GeminiClient):
-                        response_content = response
-                    # For OpenAI, get the response content
-                    # Handle both regular and async generator responses
-                    elif hasattr(response, "model_dump"):
-                        response_content = response.model_dump()
-                    elif hasattr(response, "__aiter__"):
-                        # Collect async generator into a string
+                    response_stream = await client.make_request(payload_copy)
+
+                    async def event_generator():
                         full_response_text = ""
-                        async for chunk in response:
-                            if chunk.choices and chunk.choices[0].delta.content:
-                                full_response_text += chunk.choices[0].delta.content
-                        response_content = {
-                            "choices": [
-                                {
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": full_response_text,
-                                    },
+                        async for chunk in response_stream:
+                            text_delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "") or ""
+                            full_response_text += text_delta
+                        
+                        logging.debug(f"Full streamed response for XML parsing: {full_response_text}")
+                        tool_call = parse_xml_tool_call(full_response_text)
+
+                        if tool_call:
+                            logging.info(f"XML tool call detected: {tool_call}")
+                            openai_tool_call = {
+                                "id": f"call_{int(time.time())}", "type": "function",
+                                "function": {
+                                    "name": tool_call["tool_name"],
+                                    "arguments": json.dumps(tool_call["parameters"]),
                                 },
-                            ],
-                        }
-                    else:
-                        response_content = response
+                            }
+                            final_chunk = {
+                                "id": f"chatcmpl-{int(time.time())}", "object": "chat.completion.chunk",
+                                "created": int(time.time()), "model": backend_model.model_name,
+                                "choices": [{"index": 0, "delta": {"role": "assistant", "content": None, "tool_calls": [openai_tool_call]}, "finish_reason": "tool_calls"}],
+                            }
+                            yield f"data: {json.dumps(final_chunk)}\n\n"
+                        else:
+                            logging.info("No XML tool call detected, sending plain text.")
+                            final_chunk = {
+                                "id": f"chatcmpl-{int(time.time())}", "object": "chat.completion.chunk",
+                                "created": int(time.time()), "model": backend_model.model_name,
+                                "choices": [{"index": 0, "delta": {"role": "assistant", "content": full_response_text}, "finish_reason": "stop"}],
+                            }
+                            yield f"data: {json.dumps(final_chunk)}\n\n"
+                        
+                        yield "data: [DONE]\n\n"
 
-                    content = (
-                        response_content.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
-                    tool_call = parse_xml_tool_call(content)
-
-                    if tool_call:
-                        logging.info(f"XML tool call detected: {tool_call}")
-                        state_manager.record_success(backend_model.id)
-                        # Return a compliant OpenAI tool call response
-                        return JSONResponse(
-                            content={
-                                "id": f"chatcmpl-{time.time()}",
-                                "object": "chat.completion",
-                                "choices": [
-                                    {
-                                        "index": 0,
-                                        "message": {
-                                            "role": "assistant",
-                                            "tool_calls": [
-                                                {
-                                                    "id": f"call_{time.time()}",
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": tool_call["tool_name"],
-                                                        "arguments": str(
-                                                            tool_call["parameters"],
-                                                        ),
-                                                    },
-                                                },
-                                            ],
-                                        },
-                                        "finish_reason": "tool_calls",
-                                    },
-                                ],
-                            },
-                        )
-                    # Fallback to standard response
                     state_manager.record_success(backend_model.id)
-                    return JSONResponse(content=response_content)
+                    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-                # Native Tool-Calling Passthrough
-                logging.info("Passing request to model with native tool support.")
-                response = await client.make_request(payload_copy)
-                state_manager.record_success(backend_model.id)
+                else:
+                    # --- NATIVE TOOL-CALLING / NO TOOLS LOGIC ---
+                    logging.info("Passing request with native tool support or no tools.")
+                    response = await client.make_request(payload_copy)
+                    state_manager.record_success(backend_model.id)
 
-                if stream:
-                    # Convert ChatCompletionChunk objects to server-sent events
-                    async def event_stream():
-                        async for chunk in response:
-                            # Serialize chunk to JSON and format as SSE
-                            if hasattr(chunk, "model_dump_json"):
-                                data = chunk.model_dump_json()
-                            else:
-                                import json
+                    if stream:
+                        async def native_event_stream():
+                            async for chunk in response:
+                                yield f"data: {json.dumps(chunk)}\n\n"
+                        return StreamingResponse(native_event_stream(), media_type="text/event-stream")
+                    else:
+                        return JSONResponse(content=response)
 
-                                data = json.dumps(chunk)
-                            yield f"data: {data}\n\n"
-
-                    return StreamingResponse(
-                        event_stream(),
-                        media_type="text/event-stream",
-                    )
-                # Handle Gemini responses differently since they return dicts
-                if isinstance(client.generative_client, GeminiClient):
-                    # For Gemini, response is already a dict
-                    return JSONResponse(content=response)
-                # Handle OpenAI-style responses
-                if hasattr(response, "model_dump"):
-                    return JSONResponse(content=response.model_dump())
-                if hasattr(response, "__aiter__"):
-                    # Collect async generator into a string
-                    full_response_text = ""
-                    async for chunk in response:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            full_response_text += chunk.choices[0].delta.content
-                    return JSONResponse(
-                        content={
-                            "choices": [
-                                {
-                                    "message": {
-                                        "role": "assistant",
-                                        "content": full_response_text,
-                                    },
-                                },
-                            ],
-                        },
-                    )
-                return JSONResponse(content=response)
-
+            # --- НАЧАЛО ИЗМЕНЕНИЙ В ОБРАБОТКЕ ОШИБОК ---
             except HTTPStatusError as e:
-                # ... (логика обработки ошибок)
                 status_code = e.response.status_code
                 state_manager.record_failure(backend_model.id, status_code)
                 last_error = e
+
+                if status_code == 400:
+                    logging.error(f"Fatal 400 Bad Request for {backend_model.id}: {e.response.text}. Forwarding to client.")
+                    # Немедленно прерываем и сообщаем клиенту, возвращая тело ошибки от бэкенда
+                    raise HTTPException(status_code=400, detail=e.response.json())
+
                 if status_code == 429:
                     headers = e.response.headers
-                    reset_time = float(
-                        headers.get("X-RateLimit-Reset", time.time() + 60),
-                    )
-                    if reset_time > 1e10:
-                        reset_time /= 1000.0
+                    reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
+                    if reset_time > 1e10: reset_time /= 1000.0
                     state_manager.set_cooldown(backend_model.id, reset_time)
-                    logging.warning(
-                        f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}",
-                    )
+                    logging.warning(f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}")
                 else:
-                    logging.warning(
-                        f"Request failed with status {status_code} on backend model {backend_model.id}. Error: {e.response.text}",
-                    )
+                    logging.warning(f"Request failed with status {status_code} on {backend_model.id}. Error: {e.response.text}")
+                
                 retry_count += 1
                 continue
+            # --- КОНЕЦ ИЗМЕНЕНИЙ В ОБРАБОТКЕ ОШИБОК ---
+            
             except RateLimitException as e:
-                # ... (логика обработки ошибок)
                 state_manager.set_cooldown(backend_model.id, e.reset_time)
-                logging.warning(
-                    f"Rate limit error for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}",
-                )
+                logging.warning(f"Rate limit error for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}")
                 last_error = e
                 retry_count += 1
                 continue
 
-        # If all retries failed
+        # Если все попытки провалились
         if last_error:
             if isinstance(last_error, HTTPStatusError):
-                raise HTTPException(
-                    status_code=last_error.response.status_code,
-                    detail=last_error.response.json(),
-                )
+                raise HTTPException(status_code=last_error.response.status_code, detail=last_error.response.json())
             raise HTTPException(status_code=500, detail=str(last_error))
-        raise HTTPException(
-            status_code=503,
-            detail="All models in group are overloaded or unavailable",
-        )
+        raise HTTPException(status_code=503, detail="All models in group are overloaded or unavailable")
 
     except Exception as e:
         logging.exception("Internal server error occurred")
