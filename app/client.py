@@ -100,10 +100,17 @@ class GeminiClient(BaseGenerativeClient):
     async def generate_stream(
         self, payload: Dict[str, Any]
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        contents = self._translate_payload_to_gemini(payload)
-        stream = self.client.generate_content(contents, stream=True)
-        for chunk in stream:
-            yield self._translate_gemini_response_to_openai(chunk)
+        # For Gemini, we need to accumulate the full response when using XML tool workaround
+        if payload.get("stream") is False:
+            # Handle as non-streaming request
+            response = await self.generate(payload)
+            yield response
+        else:
+            # Normal streaming behavior
+            contents = self._translate_payload_to_gemini(payload)
+            stream = self.client.generate_content(contents, stream=True)
+            for chunk in stream:
+                yield self._translate_gemini_response_to_openai(chunk)
 
 
 class OpenAIClient(BaseGenerativeClient):

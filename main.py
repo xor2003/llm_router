@@ -5,15 +5,16 @@ import sys
 import time
 
 # Add project root to Python path
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, "app"))
 
 from typing import Dict
 
 import uvicorn
 from cachetools import TTLCache
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
 
 from app.client import GeminiClient, LLMClient, RateLimitException
@@ -111,8 +112,6 @@ async def chat_completions(
             try:
                 payload_copy = payload.copy()
                 payload_copy["model"] = backend_model.model_name
-                payload_copy = payload.copy()
-                payload_copy["model"] = backend_model.model_name
                 client = client_map[backend_model.id]
 
                 # Conditional MCP Workaround Logic
@@ -207,16 +206,28 @@ async def chat_completions(
                 state_manager.record_success(backend_model.id)
 
                 if stream:
-                    # For streaming, wrap the async generator in a StreamingResponse
+                    # Convert ChatCompletionChunk objects to server-sent events
+                    async def event_stream():
+                        async for chunk in response:
+                            # Serialize chunk to JSON and format as SSE
+                            if hasattr(chunk, 'model_dump_json'):
+                                data = chunk.model_dump_json()
+                            else:
+                                import json
+                                data = json.dumps(chunk)
+                            yield f"data: {data}\n\n"
+                    
                     return StreamingResponse(
-                        response,
+                        event_stream(),
                         media_type="text/event-stream"
                     )
                 else:
+                    # Handle Gemini responses differently since they return dicts
                     if isinstance(client.generative_client, GeminiClient):
+                        # For Gemini, response is already a dict
                         return JSONResponse(content=response)
                     else:
-                        # Handle both regular and async generator responses
+                        # Handle OpenAI-style responses
                         if hasattr(response, 'model_dump'):
                             return JSONResponse(content=response.model_dump())
                         elif hasattr(response, '__aiter__'):
