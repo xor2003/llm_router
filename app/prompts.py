@@ -24,7 +24,7 @@ def generate_xml_tool_definitions(tools: list) -> str:
                 param_desc = param_details.get("description", "")
                 xml_def += f"- {param_name}: {is_required} {param_desc}\n"
 
-        # Создаем пример использования
+        # Create usage example
         usage_example = f"<usage>\n<{name}>\n"
         for param_name in params.keys():
             usage_example += f"<{param_name}>Your {param_name} here</{param_name}>\n"
@@ -34,11 +34,9 @@ def generate_xml_tool_definitions(tools: list) -> str:
 
     return "\n\n".join(xml_definitions)
 
-
 import json
 import re
 from typing import Any, Dict, Optional
-
 
 def parse_xml_tool_call(text: str) -> Optional[Dict[str, Any]]:
     """Parses the XML tool call from the LLM's response text.

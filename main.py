@@ -84,30 +84,6 @@ async def chat_completions(
                 },
             )
 
-        if is_standard_tool_request:
-            logging.info(
-                "Standard OpenAI tool request detected. Translating to XML workaround.",
-            )
-            recent_prompts_cache[user_prompt_content] = True
-            client_tools = payload.get("tools", [])
-            xml_tool_definitions = generate_xml_tool_definitions(client_tools)
-            final_system_prompt = config.mcp_tool_use_prompt_template.format(
-                TOOL_DEFINITIONS=xml_tool_definitions,
-            )
-            payload.pop("tools", None)
-            payload.pop("tool_choice", None)
-            system_message_found = False
-            for message in payload["messages"]:
-                if message["role"] == "system":
-                    message["content"] = final_system_prompt
-                    system_message_found = True
-                    break
-            if not system_message_found:
-                payload["messages"].insert(
-                    0,
-                    {"role": "system", "content": final_system_prompt},
-                )
-            logging.debug("Payload transformed with DYNAMIC tool definitions.")
         # ====================================================================
         # END: GENERALIZED LOGIC
         # ====================================================================
@@ -135,76 +111,96 @@ async def chat_completions(
             try:
                 payload_copy = payload.copy()
                 payload_copy["model"] = backend_model.model_name
+                payload_copy = payload.copy()
+                payload_copy["model"] = backend_model.model_name
                 client = client_map[backend_model.id]
-                response = await client.make_request(payload_copy)
 
-                # ====================================================================
-                # START: УНИВЕРСАЛЬНАЯ ЛОГИКА ОРКЕСТРАТОРА
-                # ====================================================================
+                # Conditional MCP Workaround Logic
+                if is_standard_tool_request and not backend_model.supports_tools:
+                    logging.info(
+                        "Applying XML tool workaround for model that does not support native tools."
+                    )
+                    recent_prompts_cache[user_prompt_content] = True
+                    client_tools = payload_copy.pop("tools", [])
+                    payload_copy.pop("tool_choice", None)
 
-                if stream:
-                    full_response_text = ""
-                    async for chunk in response:
-                        # Check which model the chunk came from
-                        if isinstance(client.generative_client, GeminiClient):
-                            # This is a chunk from Gemini
-                            if hasattr(chunk, "text"):
-                                full_response_text += chunk.text
-                        # This is a chunk from an OpenAI-compatible model
-                        elif chunk.choices and chunk.choices[0].delta.content:
-                            full_response_text += chunk.choices[0].delta.content
-
-                    logging.debug(
-                        f"Full streamed response from model: {full_response_text}",
+                    xml_tool_definitions = generate_xml_tool_definitions(client_tools)
+                    final_system_prompt = config.mcp_tool_use_prompt_template.format(
+                        TOOL_DEFINITIONS=xml_tool_definitions
                     )
 
-                    # Дальнейшая логика парсинга XML остается прежней
-                    tool_call = parse_xml_tool_call(full_response_text)
+                    system_message_found = False
+                    for message in payload_copy["messages"]:
+                        if message["role"] == "system":
+                            message["content"] = final_system_prompt
+                            system_message_found = True
+                            break
+                    if not system_message_found:
+                        payload_copy["messages"].insert(
+                            0, {"role": "system", "content": final_system_prompt}
+                        )
+                    logging.debug("Payload transformed with DYNAMIC tool definitions.")
+
+                    # For workaround, we must handle the response as a non-streamed tool call
+                    response = await client.make_request(payload_copy)
+                    if isinstance(client.generative_client, GeminiClient):
+                        response_json = response
+                    else:
+                        response_json = response.model_dump()
+
+                    content = response_json["choices"][0]["message"]["content"]
+                    tool_call = parse_xml_tool_call(content)
 
                     if tool_call:
-                        logging.info(f"Tool call detected in stream: {tool_call}")
+                        logging.info(f"XML tool call detected: {tool_call}")
                         state_manager.record_success(backend_model.id)
-                        return JSONResponse(content=tool_call, status_code=200)
-                    # Если вызова инструмента нет, возвращаем обычный текстовый ответ
-                    final_openai_response = {
-                        "id": f"chatcmpl-{time.time()}",
-                        "object": "chat.completion",
-                        "choices": [
-                            {
-                                "message": {
-                                    "role": "assistant",
-                                    "content": full_response_text,
-                                },
-                            },
-                        ],
-                    }
-                    state_manager.record_success(backend_model.id)
-                    return JSONResponse(content=final_openai_response)
-                # Logic for non-streamed response
-                if isinstance(client.generative_client, GeminiClient):
-                    # The response from Gemini is already in OpenAI dictionary format
-                    response_json = response
-                else:
-                    response_json = response.model_dump()
+                        # Return a compliant OpenAI tool call response
+                        final_response = {
+                            "id": f"chatcmpl-{time.time()}",
+                            "object": "chat.completion",
+                            "choices": [
+                                {
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "tool_calls": [
+                                            {
+                                                "id": f"call_{time.time()}",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tool_call["tool_name"],
+                                                    "arguments": str(
+                                                        tool_call["parameters"]
+                                                    ),
+                                                },
+                                            }
+                                        ],
+                                    },
+                                    "finish_reason": "tool_calls",
+                                }
+                            ],
+                        }
+                        return JSONResponse(content=final_response)
+                    else:
+                        # Fallback to standard response if no tool call detected
+                        state_manager.record_success(backend_model.id)
+                        return JSONResponse(content=response_json)
 
-                content = response_json["choices"][0]["message"]["content"]
-                tool_call = parse_xml_tool_call(content)
-
-                if tool_call:
-                    logging.info(
-                        f"Tool call detected in non-streamed response: {tool_call}",
-                    )
-                    state_manager.record_success(backend_model.id)
-                    return JSONResponse(content=tool_call, status_code=200)
+                # Native Tool-Calling Passthrough
+                logging.info("Passing request to model with native tool support.")
+                response = await client.make_request(payload_copy)
                 state_manager.record_success(backend_model.id)
-                logging.info(
-                    f"Response for {backend_model.model_name}: {response_json}",
-                )
-                return JSONResponse(content=response_json)
 
-                # ====================================================================
-                # END: УНИВЕРСАЛЬНАЯ ЛОГИКА ОРКЕСТРАТОРА
-                # ====================================================================
+                if stream:
+                    # For streaming, wrap the async generator in a StreamingResponse
+                    return StreamingResponse(
+                        response,
+                        media_type="text/event-stream"
+                    )
+                else:
+                    if isinstance(client.generative_client, GeminiClient):
+                        return JSONResponse(content=response)
+                    return JSONResponse(content=response.model_dump())
 
             except HTTPStatusError as e:
                 # ... (логика обработки ошибок)
