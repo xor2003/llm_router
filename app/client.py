@@ -5,11 +5,24 @@ from typing import Any, Optional, Dict
 import xml.etree.ElementTree as ET
 import re
 
-import google.generativeai as genai
+from abc import ABC, abstractmethod
 from openai import APIStatusError, AsyncOpenAI
 from app.config import BackendModel
 from app.router import LLMRouter
 
+class BaseGenerativeClient(ABC):
+    @abstractmethod
+    async def generate_content_async(self, contents, stream=False):
+        pass
+
+class GeminiClient(BaseGenerativeClient):
+    def __init__(self, model_name, api_key):
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        self.client = genai.GenerativeModel(model_name)
+
+    async def generate_content_async(self, contents, stream=False):
+        return self.client.generate_content(contents, stream=stream)
 
 class RateLimitException(Exception):
     def __init__(self, reset_time: float):
@@ -47,22 +60,21 @@ class LLMClient:
         self.mcp_manager.add_server("telegram", "https://mcp.telegram.example.com")
         self.mcp_manager.add_server("weather", "https://mcp.weather.example.com")
 
-        # Handle Gemini models specially
-        if "gemini" in self.model_name.lower():
-            genai.configure(api_key=backend_model.api_key)
-            # Full model name including project prefix
-            self.client = genai.GenerativeModel(self.model_name)
-            self.gemini = True
+        self.gemini = "gemini" in self.model_name.lower()
+        self.openai_client = None
+        self.generative_client = None
+
+        if self.gemini:
+            self.generative_client = GeminiClient(self.model_name, backend_model.api_key)
         else:
             # For OpenRouter, remove the 'openrouter/' prefix
             if self.model_name.startswith("openrouter/"):
                 self.model_name = self.model_name[len("openrouter/"):]
                 
-            self.client = AsyncOpenAI(
+            self.openai_client = AsyncOpenAI(
                 base_url=backend_model.api_base,
                 api_key=backend_model.api_key,
             )
-            self.gemini = False
 
     async def make_request(self, payload: dict[str, Any]) -> Any:
         """Send request to the LLM backend_model endpoint with error forwarding"""
@@ -98,13 +110,13 @@ class LLMClient:
                         # ВЕТКА ДЛЯ ПОТОКА:
                         # Вызываем API с stream=True и ВОЗВРАЩАЕМ ПОТОК НАПРЯМУЮ
                         logging.info("Making Gemini request with streaming.")
-                        response_stream = await self.client.generate_content_async(contents, stream=True)
+                        response_stream = await self.generative_client.generate_content_async(contents, stream=True)
                         return response_stream
                     else:
                         # ВЕТКА БЕЗ ПОТОКА (старая логика):
                         # Получаем полный ответ и форматируем его в словарь
                         logging.info("Making Gemini request without streaming.")
-                        response = await self.client.generate_content_async(contents)
+                        response = await self.generative_client.generate_content_async(contents)
                         # Форматируем ответ под OpenAI
                         return {
                             "id": f"chatcmpl-{time.time()}",
@@ -131,7 +143,7 @@ class LLMClient:
                 logging.info(f"Making request to {self.model_name} with payload")
                 payload["model"] = self.model_name
                 
-                response = await self.client.chat.completions.create(**payload)
+                response = await self.openai_client.chat.completions.create(**payload)
                 return response
 
         except APIStatusError as e:

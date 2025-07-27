@@ -10,3 +10,5 @@ openai
 google-genai
 
 cachetools
+
+pytest-asyncio

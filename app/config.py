@@ -81,6 +81,13 @@ def load_config(path: str) -> AppConfig:
             # Use group name from configuration
             group_name = model_definition["model_name"]
             litellm_params = model_definition.get("litellm_params", {})
+            
+            # Skip models missing required 'model' parameter
+            if "model" not in litellm_params:
+                logging.error(
+                    f"Model parameter missing for group {group_name}. Skipping."
+                )
+                continue
 
             api_key = litellm_params.get("api_key", "")
 
