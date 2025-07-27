@@ -72,7 +72,6 @@ class GeminiClient(BaseGenerativeClient):
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         contents = self._translate_payload_to_gemini(payload)
         response = await self.client.generate_content_async(contents)
-        # Транслируем полный ответ в формат OpenAI
         return {
             "id": f"chatcmpl-{time.time()}",
             "object": "chat.completion",
@@ -93,8 +92,21 @@ class GeminiClient(BaseGenerativeClient):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         contents = self._translate_payload_to_gemini(payload)
         stream = await self.client.generate_content_async(contents, stream=True)
+        
+        # --- НАЧАЛО ИЗМЕНЕНИЙ ---
         async for chunk in stream:
-            yield self._translate_gemini_chunk_to_openai(chunk)
+            try:
+                # Пытаемся обработать чанк как обычно
+                yield self._translate_gemini_chunk_to_openai(chunk)
+            except ValueError as e:
+                # Если ловим ошибку о том, что в чанке нет текста, игнорируем его
+                if "requires the response to contain a valid Part" in str(e):
+                    logging.debug("Ignoring empty/metadata chunk from Gemini stream.")
+                    continue
+                else:
+                    # Если это какая-то другая ошибка, пробрасываем ее
+                    raise e
+        # --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 
 class OpenAIClient(BaseGenerativeClient):
@@ -172,12 +184,9 @@ class LLMClient:
         raise RateLimitException(reset_time)
 
     def _handle_generic_error(self, e: Exception) -> None:
-        # --- НАЧАЛО ИЗМЕНЕНИЙ ДЛЯ GEMINI 429 ---
-        # Проверяем, является ли ошибка ошибкой исчерпания ресурсов от Google
         if isinstance(e, google.api_core.exceptions.ResourceExhausted):
             logging.warning(f"Gemini rate limit error for {self.model_name}: {e}")
             try:
-                # Пытаемся распарсить JSON из сообщения об ошибке
                 error_json = json.loads(e.message)
                 retry_info = None
                 for detail in error_json.get("error", {}).get("details", []):
@@ -186,7 +195,7 @@ class LLMClient:
                         break
                 
                 if retry_info and "retryDelay" in retry_info:
-                    delay_str = retry_info["retryDelay"]  # e.g., "30s"
+                    delay_str = retry_info["retryDelay"]
                     delay_seconds = int(re.sub(r"\D", "", delay_str))
                     reset_time = time.time() + delay_seconds
                     logging.info(f"Gemini API requested a specific retry delay of {delay_seconds}s.")
@@ -194,9 +203,7 @@ class LLMClient:
             except (json.JSONDecodeError, KeyError, TypeError, ValueError) as parse_error:
                 logging.warning(f"Could not parse Gemini retry delay, using default: {parse_error}")
             
-            # Если парсинг не удался, используем стандартный кулдаун
             raise RateLimitException(time.time() + 60) from e
-        # --- КОНЕЦ ИЗМЕНЕНИЙ ДЛЯ GEMINI 429 ---
 
         logging.exception(f"Error making request to {self.model_name}: {e}")
         raise e
