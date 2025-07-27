@@ -101,7 +101,7 @@ def load_config(path: str) -> AppConfig:
             # Skip models missing required 'model' parameter
             if "model" not in litellm_params:
                 logging.error(
-                    f"Model parameter missing for group {group_name}. Skipping.",
+                    f"`model` parameter missing for group {group_name}. Skipping.",
                 )
                 continue
 

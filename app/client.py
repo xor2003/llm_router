@@ -95,17 +95,14 @@ class GeminiClient(BaseGenerativeClient):
         
         # --- НАЧАЛО ИЗМЕНЕНИЙ ---
         async for chunk in stream:
-            try:
-                # Пытаемся обработать чанк как обычно
-                yield self._translate_gemini_chunk_to_openai(chunk)
-            except ValueError as e:
-                # Если ловим ошибку о том, что в чанке нет текста, игнорируем его
-                if "requires the response to contain a valid Part" in str(e):
-                    logging.debug("Ignoring empty/metadata chunk from Gemini stream.")
-                    continue
-                else:
-                    # Если это какая-то другая ошибка, пробрасываем ее
-                    raise e
+            # ПРОВЕРЯЕМ, есть ли в чанке контент, ПРЕЖДЕ чем пытаться его обработать.
+            # Пустые чанки (только с finish_reason) будут проигнорированы.
+            if not chunk.parts:
+                logging.debug(f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}")
+                continue
+            
+            # Если проверка пройдена, чанк содержит текст и его безопасно обрабатывать.
+            yield self._translate_gemini_chunk_to_openai(chunk)
         # --- КОНЕЦ ИЗМЕНЕНИЙ ---
 
 
@@ -207,4 +204,3 @@ class LLMClient:
 
         logging.exception(f"Error making request to {self.model_name}: {e}")
         raise e
-    
