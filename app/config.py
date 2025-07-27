@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
 
+
 # Модели Pydantic для структуры config.yaml
 class LiteLLMParams(BaseModel):
     model: str
