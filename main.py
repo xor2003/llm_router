@@ -123,6 +123,8 @@ async def chat_completions(
                     recent_prompts_cache[user_prompt_content] = True
                     client_tools = payload_copy.pop("tools", [])
                     payload_copy.pop("tool_choice", None)
+                    # Force non-streaming for XML workaround to simplify response handling
+                    payload_copy["stream"] = False
 
                     xml_tool_definitions = generate_xml_tool_definitions(client_tools)
                     final_system_prompt = config.mcp_tool_use_prompt_template.format(
@@ -139,52 +141,65 @@ async def chat_completions(
                         payload_copy["messages"].insert(
                             0, {"role": "system", "content": final_system_prompt}
                         )
-                    logging.debug("Payload transformed with DYNAMIC tool definitions.")
+                    logging.debug("Payload transformed with DYNAMIC tool definitions and forced non-streaming.")
 
-                    # For workaround, we must handle the response as a non-streamed tool call
+                    # Forced non-streaming handling for XML workaround
                     response = await client.make_request(payload_copy)
+                    # For Gemini, response is already a dict
                     if isinstance(client.generative_client, GeminiClient):
-                        response_json = response
+                        response_content = response
                     else:
-                        response_json = response.model_dump()
+                        # For OpenAI, get the response content
+                        # Handle both regular and async generator responses
+                        if hasattr(response, 'model_dump'):
+                            response_content = response.model_dump()
+                        elif hasattr(response, '__aiter__'):
+                            # Collect async generator into a string
+                            full_response_text = ""
+                            async for chunk in response:
+                                if chunk.choices and chunk.choices[0].delta.content:
+                                    full_response_text += chunk.choices[0].delta.content
+                            response_content = {
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": full_response_text
+                                    }
+                                }]
+                            }
+                        else:
+                            response_content = response
 
-                    content = response_json["choices"][0]["message"]["content"]
+                    content = response_content.get("choices", [{}])[0].get("message", {}).get("content", "")
                     tool_call = parse_xml_tool_call(content)
 
                     if tool_call:
                         logging.info(f"XML tool call detected: {tool_call}")
                         state_manager.record_success(backend_model.id)
                         # Return a compliant OpenAI tool call response
-                        final_response = {
+                        return JSONResponse(content={
                             "id": f"chatcmpl-{time.time()}",
                             "object": "chat.completion",
-                            "choices": [
-                                {
-                                    "index": 0,
-                                    "message": {
-                                        "role": "assistant",
-                                        "tool_calls": [
-                                            {
-                                                "id": f"call_{time.time()}",
-                                                "type": "function",
-                                                "function": {
-                                                    "name": tool_call["tool_name"],
-                                                    "arguments": str(
-                                                        tool_call["parameters"]
-                                                    ),
-                                                },
-                                            }
-                                        ],
-                                    },
-                                    "finish_reason": "tool_calls",
-                                }
-                            ],
-                        }
-                        return JSONResponse(content=final_response)
+                            "choices": [{
+                                "index": 0,
+                                "message": {
+                                    "role": "assistant",
+                                    "tool_calls": [{
+                                        "id": f"call_{time.time()}",
+                                        "type": "function",
+                                        "function": {
+                                            "name": tool_call["tool_name"],
+                                            "arguments": str(tool_call["parameters"])
+                                        }
+                                    }]
+                                },
+                                "finish_reason": "tool_calls"
+                            }]
+                        })
                     else:
-                        # Fallback to standard response if no tool call detected
+                        # Fallback to standard response
                         state_manager.record_success(backend_model.id)
-                        return JSONResponse(content=response_json)
+                        return JSONResponse(content=response_content)
 
                 # Native Tool-Calling Passthrough
                 logging.info("Passing request to model with native tool support.")
@@ -200,7 +215,26 @@ async def chat_completions(
                 else:
                     if isinstance(client.generative_client, GeminiClient):
                         return JSONResponse(content=response)
-                    return JSONResponse(content=response.model_dump())
+                    else:
+                        # Handle both regular and async generator responses
+                        if hasattr(response, 'model_dump'):
+                            return JSONResponse(content=response.model_dump())
+                        elif hasattr(response, '__aiter__'):
+                            # Collect async generator into a string
+                            full_response_text = ""
+                            async for chunk in response:
+                                if chunk.choices and chunk.choices[0].delta.content:
+                                    full_response_text += chunk.choices[0].delta.content
+                            return JSONResponse(content={
+                                "choices": [{
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": full_response_text
+                                    }
+                                }]
+                            })
+                        else:
+                            return JSONResponse(content=response)
 
             except HTTPStatusError as e:
                 # ... (логика обработки ошибок)
