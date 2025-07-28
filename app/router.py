@@ -1,6 +1,5 @@
 # app/router.py
 import logging
-from typing import Dict, List, Optional
 
 from app.config import AppConfig, BackendModel
 from app.state import ModelStateManager
@@ -10,19 +9,19 @@ logger = logging.getLogger(__name__)
 
 class LLMRouter:
     def __init__(self, config: AppConfig):
-        self.model_groups: Dict[str, List[BackendModel]] = {}
-        self.model_map: Dict[str, BackendModel] = {}
-        self.group_counters: Dict[str, int] = {}
+        self.model_groups: dict[str, list[BackendModel]] = {}
+        self.model_map: dict[str, BackendModel] = {}
+        self.group_counters: dict[str, int] = {}
 
         # --- START CHANGES ---
         # Dictionary to store current active model ID for each group
-        self.active_model_ids: Dict[str, Optional[str]] = {}
+        self.active_model_ids: dict[str, str | None] = {}
         # --- END CHANGES ---
 
         self._build_groups(config.model_list)
         logger.info(f"Initialized groups: {list(self.model_groups.keys())}")
 
-    def _build_groups(self, model_list: List[BackendModel]):
+    def _build_groups(self, model_list: list[BackendModel]) -> None:
         for model in model_list:
             if not all([model.id, model.group_name, model.model_name]):
                 logger.error(
@@ -41,7 +40,7 @@ class LLMRouter:
             self.group_counters[group_name] = 0
             logger.info(f"Initialized counter for group: {group_name}")
 
-    def get_model_by_id(self, model_id: str) -> Optional[BackendModel]:
+    def get_model_by_id(self, model_id: str) -> BackendModel | None:
         """Returns BackendModel object by its unique ID."""
         return self.model_map.get(model_id)
 
@@ -50,7 +49,7 @@ class LLMRouter:
         self,
         group_name: str,
         state_manager: ModelStateManager,
-    ) -> Optional[BackendModel]:
+    ) -> BackendModel | None:
         """Returns current active model. If unavailable,
         selects next working model and makes it the new active one.
         """
@@ -83,9 +82,7 @@ class LLMRouter:
                 logger.info(
                     f"New active model for group {group_name} is {next_model.id}.",
                 )
-                self.active_model_ids[group_name] = (
-                    next_model.id
-                )  # Make it the new active model
+                self.active_model_ids[group_name] = next_model.id  # Make it the new active model
                 return next_model
 
         logger.error(f"No available models found in group {group_name}.")

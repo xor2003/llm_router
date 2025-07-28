@@ -65,17 +65,17 @@ class AppConfig(BaseModel):
 
 # Loading .env file
 class EnvSettings(BaseSettings):
-    GEMINI_API_KEY: str
-    OPENROUTER_KEY1: str
-    OPENROUTER_KEY2: str
-    OPENROUTER_KEY3: str
-    OPENROUTER_KEY4: str
-    OPENROUTER_KEY5: str
-    OPENROUTER_KEY6: str
-    OPENROUTER_KEY7: str
-    OPENROUTER_KEY8: str
-    OPENROUTER_KEY9: str
-    OPENROUTER_KEY10: str
+    GEMINI_API_KEY: str = ""
+    OPENROUTER_KEY1: str = ""
+    OPENROUTER_KEY2: str = ""
+    OPENROUTER_KEY3: str = ""
+    OPENROUTER_KEY4: str = ""
+    OPENROUTER_KEY5: str = ""
+    OPENROUTER_KEY6: str = ""
+    OPENROUTER_KEY7: str = ""
+    OPENROUTER_KEY8: str = ""
+    OPENROUTER_KEY9: str = ""
+    OPENROUTER_KEY10: str = ""
 
     class Config:
         env_file = ".env"
@@ -131,16 +131,13 @@ def load_config(path: str) -> AppConfig:
                     continue
 
             # Generate unique ID
-            model_struct["id"] = (
-                litellm_params["model"] + "/" + model_struct["api_key"][-4:]
-            )
+            model_struct["id"] = litellm_params["model"] + "/" + model_struct["api_key"][-4:]
             model_struct["rpm"] = litellm_params["rpm"]
 
             # Detect tool support based on model name
             model_name_str = litellm_params["model"]
             model_struct["supports_tools"] = any(
-                kw in model_name_str.lower()
-                for kw in ("gpt-4", "claude", "command-r", "mixtral")
+                kw in model_name_str.lower() for kw in ("gpt-4", "claude", "command-r", "mixtral")
             )
 
             if model_name_str.startswith("gemini/"):

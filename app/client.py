@@ -4,7 +4,7 @@ import re
 import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from typing import Any, Dict
+from typing import Any
 
 import google.api_core.exceptions
 from openai import APIStatusError, AsyncOpenAI, RateLimitError
@@ -17,14 +17,14 @@ class BaseGenerativeClient(ABC):
     """Abstract base class for a generative AI client."""
 
     @abstractmethod
-    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def generate(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Generate a non-streaming response."""
 
     @abstractmethod
     async def generate_stream(
         self,
-        payload: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Generate a streaming response."""
 
 
@@ -37,20 +37,24 @@ class GeminiClient(BaseGenerativeClient):
 
         # Configure API key
         import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        
+
+        genai.configure(api_key=api_key)  # type: ignore[attr-defined]
+
         # Get the generative client
         self.client = client.get_default_generative_client()
-        
+
         # Format model name according to API requirements
         formatted_model_name = f"models/{model_name}" if not model_name.startswith("models/") else model_name
         self.logger.debug(
-            f"Sending to Gemini model `{formatted_model_name}`\n"
+            f"Sending to Gemini model `{formatted_model_name}`\n",
         )
         self.model_name = formatted_model_name
-        self.model = genai.GenerativeModel(formatted_model_name)
+        self.model = genai.GenerativeModel(formatted_model_name)  # type: ignore[attr-defined]
 
-    def _translate_payload_to_gemini(self, payload: Dict[str, Any]) -> list[Dict]:
+    def _translate_payload_to_gemini(
+        self,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         contents = []
         for msg in payload.get("messages", []):
             role = "user" if msg["role"] == "user" else "model"
@@ -71,7 +75,7 @@ class GeminiClient(BaseGenerativeClient):
                 )
         return contents
 
-    def _translate_gemini_chunk_to_openai(self, chunk) -> Dict[str, Any]:
+    def _translate_gemini_chunk_to_openai(self, chunk: Any) -> dict[str, Any]:
         return {
             "id": f"chatcmpl-chunk-{time.time()}",
             "object": "chat.completion.chunk",
@@ -86,11 +90,10 @@ class GeminiClient(BaseGenerativeClient):
             ],
         }
 
-    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def generate(self, payload: dict[str, Any]) -> dict[str, Any]:
         contents = self._translate_payload_to_gemini(payload)
         self.logger.debug(
-            f'Sending to Gemini model: "{self.model_name}"\n'
-            f"Contents: {json.dumps(contents, indent=2)}"
+            f'Sending to Gemini model: "{self.model_name}"\n' f"Contents: {json.dumps(contents, indent=2)}",
         )
         response = self.model.generate_content(contents)
         return {
@@ -108,28 +111,32 @@ class GeminiClient(BaseGenerativeClient):
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    async def generate_stream(
+    async def generate_stream(  # type: ignore[override]
         self,
-        payload: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         contents = self._translate_payload_to_gemini(payload)
-        
+
         # Log the actual request being sent to Gemini with arguments
         self.logger.debug(
             f"Sending to Gemini model {self.model_name} with arguments:\n"
             f"Contents: {json.dumps(contents, indent=2)}\n"
-            f"Stream: True"
+            f"Stream: True",
         )
-        stream = self.model.generate_content(contents, stream=True)
+        try:
+            stream = self.model.generate_content(contents, stream=True)
 
-        for chunk in stream:
-            if not chunk.parts:
-                self.logger.debug(
-                    f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}",
-                )
-                continue
+            for chunk in stream:
+                if not chunk.parts:
+                    self.logger.debug(
+                        f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}",
+                    )
+                    continue
 
-            yield self._translate_gemini_chunk_to_openai(chunk)
+                yield self._translate_gemini_chunk_to_openai(chunk)
+        except google.api_core.exceptions.ServiceUnavailable as e:
+            self.logger.warning(f"Gemini service unavailable: {e}")
+            raise CustomRateLimitException(time.time() + 60) from e
 
 
 class OpenAIClient(BaseGenerativeClient):
@@ -138,20 +145,22 @@ class OpenAIClient(BaseGenerativeClient):
         self.logger = logging.getLogger(f"{self.__class__.__name__}[{model_id}]")
 
         if model_name.startswith("openrouter/"):
-            model_name = model_name[len("openrouter/"):]
+            model_name = model_name[len("openrouter/") :]
         self.model_name = model_name
         self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
-    async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def generate(self, payload: dict[str, Any]) -> dict[str, Any]:
         payload_copy = payload.copy()
         payload_copy["model"] = self.model_name
-        response = await self.client.chat.completions.create(**payload_copy)
-        return response.model_dump()
+        from typing import cast
 
-    async def generate_stream(
+        response = await self.client.chat.completions.create(**payload_copy)
+        return cast(dict[str, Any], response.model_dump())
+
+    async def generate_stream(  # type: ignore[override]
         self,
-        payload: Dict[str, Any],
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        payload: dict[str, Any],
+    ) -> AsyncGenerator[dict[str, Any], None]:
         payload_copy = payload.copy()
         payload_copy["model"] = self.model_name
         payload_copy["stream"] = True
@@ -210,8 +219,8 @@ class LLMClient:
         """Handles the specific RateLimitError from the openai library."""
         reset_time = time.time() + 60  # Default value
         try:
-            if e.body and "error" in e.body:
-                headers = e.body["error"].get("metadata", {}).get("headers", {})
+            if e.body and "error" in e.body:  # type: ignore[operator]
+                headers = e.body["error"].get("metadata", {}).get("headers", {})  # type: ignore[index]
                 reset_header = headers.get("X-RateLimit-Reset")
                 if reset_header:
                     reset_time = float(reset_header)
@@ -243,10 +252,7 @@ class LLMClient:
                 error_json = json.loads(e.message)
                 retry_info = None
                 for detail in error_json.get("error", {}).get("details", []):
-                    if (
-                        detail.get("@type")
-                        == "type.googleapis.com/google.rpc.RetryInfo"
-                    ):
+                    if detail.get("@type") == "type.googleapis.com/google.rpc.RetryInfo":
                         retry_info = detail
                         break
 

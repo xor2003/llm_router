@@ -5,7 +5,7 @@ import time
 class ModelState:
     """Tracks state for a single model backend_model."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_used: float = 0.0
         self.is_on_cooldown: bool = False
         self.cooldown_until: float = 0.0
@@ -15,11 +15,11 @@ class ModelState:
 class ModelStateManager:
     """Manages state for all model backend_models."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.states: dict[str, ModelState] = {}
 
-    def initialize_models(self, model_ids: list[str]):
+    def initialize_models(self, model_ids: list[str]) -> None:
         """Initialize state for multiple models at once"""
         for model_id in model_ids:
             if model_id not in self.states:
@@ -58,14 +58,14 @@ class ModelStateManager:
 
         return True
 
-    def record_success(self, backend_model_id: str):
+    def record_success(self, backend_model_id: str) -> None:
         """Record a successful request to a backend_model."""
         state = self._get_state(backend_model_id)
         state.last_used = time.time()
         state.failure_count = 0
         self.logger.info(f"Recorded success for {backend_model_id}")
 
-    def record_failure(self, backend_model_id: str, status_code: int):
+    def record_failure(self, backend_model_id: str, status_code: int) -> None:
         """Record a failed request to a backend_model."""
         state = self._get_state(backend_model_id)
         state.failure_count += 1
@@ -77,7 +77,7 @@ class ModelStateManager:
         if status_code == 429:
             self.set_cooldown(backend_model_id, time.time() + 60)  # 60s cooldown
 
-    def set_cooldown(self, backend_model_id: str, reset_time: float):
+    def set_cooldown(self, backend_model_id: str, reset_time: float) -> None:
         """Set cooldown until specified reset time"""
         state = self._get_state(backend_model_id)
         current_time = time.time()

@@ -1,4 +1,9 @@
-def generate_xml_tool_definitions(tools: list) -> str:
+import json
+import re
+from typing import Any
+
+
+def generate_xml_tool_definitions(tools: list[dict[str, Any]]) -> str:
     """Converts a list of OpenAI-style tool definitions (JSON) into
     the XML format required by the RooCode-style prompt.
     """
@@ -18,9 +23,7 @@ def generate_xml_tool_definitions(tools: list) -> str:
         if params:
             xml_def += "Parameters:\n"
             for param_name, param_details in params.items():
-                is_required = (
-                    "(required)" if param_name in required_params else "(optional)"
-                )
+                is_required = "(required)" if param_name in required_params else "(optional)"
                 param_desc = param_details.get("description", "")
                 xml_def += f"- {param_name}: {is_required} {param_desc}\n"
 
@@ -35,12 +38,7 @@ def generate_xml_tool_definitions(tools: list) -> str:
     return "\n\n".join(xml_definitions)
 
 
-import json
-import re
-from typing import Any, Dict, Optional
-
-
-def parse_xml_tool_call(text: str) -> Optional[Dict[str, Any]]:
+def parse_xml_tool_call(text: str) -> dict[str, Any] | None:
     """Parses the XML tool call from the LLM's response text.
     Returns a dictionary with tool_name and parameters, or None.
     """

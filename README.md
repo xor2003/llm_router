@@ -1,3 +1,8 @@
+[![ruff](https://img.shields.io/badge/ruff-checked-red)](https://github.com/astral-sh/ruff)
+[![mypy](https://img.shields.io/badge/mypy-checked-blue)](https://mypy-lang.org/)
+[![tests](https://img.shields.io/github/actions/workflow/status/xor2003/llm_router/main.yml?branch=main)](https://github.com/xor2003/llm_router/actions)
+[![coverage](https://img.shields.io/codecov/c/github/xor2003/llm_router/main)](https://codecov.io/gh/xor2003/llm_router)
+
 # LLM Proxy Router
 
 A FastAPI-based proxy server that intelligently routes requests to various LLM providers (OpenAI, Gemini) with failover handling, rate limiting, and tool call support.

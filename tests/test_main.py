@@ -79,9 +79,7 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
     # Response is now Server-Sent Events stream, needs different parsing.
     lines = response.text.strip().split("\n")
     # We're interested only in data line, not empty lines and not "[DONE]"
-    data_line = [
-        line for line in lines if line.startswith("data:") and "[DONE]" not in line
-    ][0]
+    data_line = next(line for line in lines if line.startswith("data:") and "[DONE]" not in line)
 
     # Remove "data: " and parse JSON
     response_json = json.loads(data_line.replace("data: ", ""))
