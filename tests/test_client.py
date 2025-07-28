@@ -5,7 +5,7 @@ import pytest
 from httpx import Request, Response
 from openai import APIStatusError
 
-from app.client import GeminiClient, LLMClient, OpenAIClient, RateLimitException
+from app.client import GeminiClient, LLMClient, OpenAIClient, CustomRateLimitException
 from app.config import BackendModel
 from app.dependencies import get_llm_client
 from app.router import LLMRouter
@@ -167,7 +167,7 @@ async def test_rate_limit_exception_handling(mock_openai_backend_model, mock_rou
         new_callable=AsyncMock,
     ) as mock_generate:
         mock_generate.side_effect = api_error
-        with pytest.raises(RateLimitException) as exc_info:
+        with pytest.raises(CustomRateLimitException) as exc_info:
             await llm_client.make_request(
                 {"messages": [{"role": "user", "content": "Hello"}]},
             )

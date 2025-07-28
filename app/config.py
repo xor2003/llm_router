@@ -8,13 +8,13 @@ from pydantic_settings import BaseSettings
 logger = logging.getLogger(__name__)
 
 
-# Модели Pydantic для структуры config.yaml
+# Pydantic models for config.yaml structure
 class LiteLLMParams(BaseModel):
     model: str
     api_key: str
     api_base: str | None = None
     rpm: int | None = None
-    # Добавьте другие параметры litellm по необходимости
+    # Add other litellm parameters as needed
 
 
 class DeploymentModel(BaseModel):
@@ -63,7 +63,7 @@ class AppConfig(BaseModel):
         return cls.model_validate(obj)
 
 
-# Загрузка .env файла
+# Loading .env file
 class EnvSettings(BaseSettings):
     GEMINI_API_KEY: str
     OPENROUTER_KEY1: str
@@ -86,13 +86,13 @@ env_settings = EnvSettings()
 
 
 def load_config(path: str) -> AppConfig:
-    """Загружает, парсит и валидирует конфигурацию из YAML файла."""
-    logger.info(f"Загрузка конфигурации из {path}...")
+    """Loads, parses and validates configuration from YAML file."""
+    logger.info(f"Loading configuration from {path}...")
     try:
         with open(path) as f:
             raw_config = yaml.safe_load(f)
 
-        # Парсинг переменных окружения
+        # Parsing environment variables
         valid_models = []
 
         for model_definition in raw_config.get("model_list", []):
@@ -116,7 +116,7 @@ def load_config(path: str) -> AppConfig:
 
             if not api_key:
                 logger.warning(
-                    f"API ключ для модели {litellm_params.get('model', 'unknown')} отсутствует. Пропускаем.",
+                    f"API key for model {litellm_params.get('model', 'unknown')} is missing. Skipping.",
                 )
                 continue
 
@@ -126,7 +126,7 @@ def load_config(path: str) -> AppConfig:
                 model_struct["api_key"] = getattr(env_settings, env_var, None)
                 if not model_struct["api_key"]:
                     logger.error(
-                        f"Переменная окружения {env_var} не найдена. Пропускаем модель.",
+                        f"Environment variable {env_var} not found. Skipping model.",
                     )
                     continue
 
@@ -168,5 +168,5 @@ def load_config(path: str) -> AppConfig:
 
         return AppConfig.model_validate(raw_config)
     except (FileNotFoundError, ValidationError, TypeError) as e:
-        logger.exception(f"Ошибка загрузки или валидации конфигурации: {e}")
+        logger.exception(f"Error loading or validating configuration: {e}")
         raise

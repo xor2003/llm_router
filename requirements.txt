@@ -12,3 +12,4 @@ google-genai
 cachetools
 
 pytest-asyncio
+pytest-cov

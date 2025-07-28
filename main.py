@@ -19,7 +19,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
 
-from app.client import LLMClient, RateLimitException
+from app.client import CustomRateLimitException, LLMClient
 from app.config import AppConfig
 from app.dependencies import get_client_map, get_config, get_router, get_state_manager
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
@@ -46,7 +46,7 @@ async def list_models(config: AppConfig = Depends(get_config)):
 
 
 @app.post("/v1/chat/completions")
-@app.post("/chat/completions")
+@app.post("/chat_completions")
 async def chat_completions(
     request: Request,
     router: LLMRouter = Depends(get_router),
@@ -85,15 +85,27 @@ async def chat_completions(
             raise HTTPException(status_code=400, detail="Model parameter is required")
 
         retry_count = 0
-        max_retries = 3
+        # Maximum attempts equals the number of models in the group to guarantee trying all
+        max_retries = len(router.model_groups.get(model_group, []))
+        if max_retries == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model group '{model_group}' not found or is empty.",
+            )
+
         last_error = None
 
         while retry_count < max_retries:
-            backend_model = router.get_next_backend_model(model_group)
+            # Use new smart method to select "active" model or switch on failure
+            backend_model = router.get_active_or_failover_model(
+                model_group,
+                state_manager,
+            )
+
             if not backend_model:
                 raise HTTPException(
                     status_code=503,
-                    detail="All models in group are overloaded or unavailable",
+                    detail=f"All models in group '{model_group}' are currently overloaded or unavailable",
                 )
 
             logger.info(
@@ -105,6 +117,7 @@ async def chat_completions(
                 payload_copy = payload.copy()
                 client = client_map[backend_model.id]
 
+                # --- XML WORKAROUND LOGIC ---
                 if is_standard_tool_request and not backend_model.supports_tools:
                     logger.info("Applying XML tool workaround...")
                     recent_prompts_cache[user_prompt_content] = True
@@ -206,6 +219,7 @@ async def chat_completions(
                         media_type="text/event-stream",
                     )
 
+                # --- NATIVE TOOL-CALLING / NO TOOLS LOGIC ---
                 logger.info("Passing request with native tool support or no tools.")
                 response = await client.make_request(payload_copy)
                 state_manager.record_success(backend_model.id)
@@ -222,17 +236,14 @@ async def chat_completions(
                     )
                 return JSONResponse(content=response)
 
-            # --- НАЧАЛО ИЗМЕНЕНИЙ В ОБРАБОТКЕ ОШИБОК ---
             except openai.RateLimitError as e:
-                # Ловим специфичную ошибку от OpenAI клиента
+                logger.warning(
+                    f"OpenAI RateLimitError for {backend_model.id}. Error: {e.body}. Retrying...",
+                )
                 state_manager.record_failure(backend_model.id, 429)
                 last_error = e
-                # Устанавливаем кулдаун на 60 секунд, т.к. точное время не всегда доступно
                 reset_time = time.time() + 60
                 state_manager.set_cooldown(backend_model.id, reset_time)
-                logger.warning(
-                    f"OpenAI RateLimitError for {backend_model.id}, cooldown for 60s. Error: {e.body}",
-                )
                 retry_count += 1
                 continue
 
@@ -256,31 +267,37 @@ async def chat_completions(
                         reset_time /= 1000.0
                     state_manager.set_cooldown(backend_model.id, reset_time)
                     logger.warning(
-                        f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}",
+                        f"Rate limit hit for {backend_model.id}, cooldown until {time.ctime(reset_time)}. Retrying...",
                     )
                 else:
                     logger.warning(
-                        f"Request failed with status {status_code} on {backend_model.id}. Error: {e.response.text}",
+                        f"Request failed with status {status_code} on {backend_model.id}. Error: {e.response.text}. Retrying...",
                     )
 
                 retry_count += 1
                 continue
-            # --- КОНЕЦ ИЗМЕНЕНИЙ В ОБРАБОТКЕ ОШИБОК ---
 
-            except RateLimitException as e:
-                state_manager.set_cooldown(backend_model.id, e.reset_time)
+            except CustomRateLimitException as e:
                 logger.warning(
-                    f"Rate limit error for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}",
+                    f"Custom RateLimitException for {backend_model.id}, cooldown until {time.ctime(e.reset_time)}. Retrying...",
                 )
+                state_manager.record_failure(backend_model.id, 429)
+                state_manager.set_cooldown(backend_model.id, e.reset_time)
                 last_error = e
                 retry_count += 1
                 continue
 
+        # If all attempts failed
         if last_error:
             if isinstance(last_error, (HTTPStatusError, openai.APIStatusError)):
+                # Check if error has response body to avoid crashes
+                try:
+                    detail = last_error.response.json()
+                except Exception:
+                    detail = str(last_error)
                 raise HTTPException(
                     status_code=last_error.response.status_code,
-                    detail=last_error.response.json(),
+                    detail=detail,
                 )
             raise HTTPException(status_code=500, detail=str(last_error))
         raise HTTPException(

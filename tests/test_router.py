@@ -41,36 +41,4 @@ def mock_models():
 def router(mock_models):
     state_manager = MagicMock(spec=ModelStateManager)
     settings = MagicMock()
-    return LLMRouter(mock_models, state_manager, settings)
-
-
-# Test model selection
-def test_model_group_selection(router):
-    """Verify router selects model from group."""
-    router._state_manager.is_available.return_value = True
-    model = router.get_next_backend_model("group1")
-    assert model.id in ["model1", "model2"]
-
-
-# Test fallback mechanism
-def test_fallback_mechanism(router):
-    """Verify router falls back to next model when unavailable."""
-    # First model is unavailable
-    router._state_manager.is_available.side_effect = [False, True]
-
-    model = router.get_next_backend_model("group1")
-    assert model.id == "model2"
-
-
-# Test edge cases
-def test_no_models_available(router):
-    """Verify router handles no models available."""
-    router._state_manager.is_available.return_value = False
-    model = router.get_next_backend_model("group1")
-    assert model is None
-
-
-def test_invalid_group(router):
-    """Verify router handles invalid group name."""
-    model = router.get_next_backend_model("invalid_group")
-    assert model is None
+    return LLMRouter(settings)

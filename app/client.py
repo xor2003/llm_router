@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from typing import Any, Dict
 
 import google.api_core.exceptions
-from openai import APIStatusError, AsyncOpenAI
+from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 from app.config import BackendModel
 from app.router import LLMRouter
@@ -32,7 +32,7 @@ class GeminiClient(BaseGenerativeClient):
     def __init__(self, model_id: str, model_name: str, api_key: str):
         import google.generativeai as genai
 
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(f"{self.__class__.__name__}[{model_id}]")
         self.model_id = model_id
 
         genai.configure(api_key=api_key)
@@ -101,10 +101,9 @@ class GeminiClient(BaseGenerativeClient):
         stream = await self.client.generate_content_async(contents, stream=True)
 
         async for chunk in stream:
-            # НАДЕЖНАЯ ПРОВЕРКА: Игнорируем пустые чанки, которые вызывают ошибку
             if not chunk.parts:
                 self.logger.debug(
-                    f"Ignoring empty/metadata chunk from Gemini stream: {chunk.candidates[0].finish_reason}",
+                    f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}",
                 )
                 continue
 
@@ -114,7 +113,7 @@ class GeminiClient(BaseGenerativeClient):
 class OpenAIClient(BaseGenerativeClient):
     def __init__(self, model_id: str, model_name: str, api_key: str, api_base: str):
         self.model_id = model_id
-        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger = logging.getLogger(f"{self.__class__.__name__}[{model_id}]")
 
         if model_name.startswith("openrouter/"):
             model_name = model_name[len("openrouter/") :]
@@ -139,7 +138,7 @@ class OpenAIClient(BaseGenerativeClient):
             yield chunk.model_dump()
 
 
-class RateLimitException(Exception):
+class CustomRateLimitException(Exception):
     def __init__(self, reset_time: float):
         self.reset_time = reset_time
         super().__init__(f"Rate limit exceeded. Reset at {reset_time}")
@@ -168,6 +167,11 @@ class LLMClient:
             if stream:
                 return self.generative_client.generate_stream(payload)
             return await self.generative_client.generate(payload)
+        # --- START CHANGES ---
+        except RateLimitError as e:
+            # Explicitly catch OpenAI error and pass to our handler
+            self._handle_openai_rate_limit_error(e)
+        # --- END CHANGES ---
         except APIStatusError as e:
             self._handle_api_error(e)
         except Exception as e:
@@ -180,13 +184,35 @@ class LLMClient:
             self.logger.error(f"Unhandled API error: {e.status_code}")
             raise e
 
+    def _handle_openai_rate_limit_error(self, e: RateLimitError) -> None:
+        """Handles the specific RateLimitError from the openai library."""
+        reset_time = time.time() + 60  # Default value
+        try:
+            if e.body and "error" in e.body:
+                headers = e.body["error"].get("metadata", {}).get("headers", {})
+                reset_header = headers.get("X-RateLimit-Reset")
+                if reset_header:
+                    reset_time = float(reset_header)
+                    if reset_time > 1e10:
+                        reset_time /= 1000.0
+        except (KeyError, TypeError, ValueError):
+            self.logger.warning(
+                "Could not parse precise reset time from openai.RateLimitError body. Using default.",
+            )
+
+        self.logger.warning(
+            f"OpenAI RateLimitError: Reset at {time.ctime(reset_time)}. Error: {e.body}",
+        )
+        raise CustomRateLimitException(reset_time) from e
+
     def _handle_rate_limit_error(self, e: APIStatusError) -> None:
+        """Handles 429 from a generic APIStatusError."""
         headers = e.response.headers
         reset_time = float(headers.get("X-RateLimit-Reset", time.time() + 60))
         if reset_time > 1e10:
             reset_time /= 1000.0
         self.logger.warning(f"Rate limit error: Reset at {time.ctime(reset_time)}")
-        raise RateLimitException(reset_time)
+        raise CustomRateLimitException(reset_time)
 
     def _handle_generic_error(self, e: Exception) -> None:
         if isinstance(e, google.api_core.exceptions.ResourceExhausted):
@@ -209,7 +235,7 @@ class LLMClient:
                     self.logger.info(
                         f"Gemini API requested a specific retry delay of {delay_seconds}s.",
                     )
-                    raise RateLimitException(reset_time) from e
+                    raise CustomRateLimitException(reset_time) from e
             except (
                 json.JSONDecodeError,
                 KeyError,
@@ -220,7 +246,7 @@ class LLMClient:
                     f"Could not parse Gemini retry delay, using default: {parse_error}",
                 )
 
-            raise RateLimitException(time.time() + 60) from e
+            raise CustomRateLimitException(time.time() + 60) from e
 
         self.logger.exception(f"Unhandled generic error making request: {e}")
         raise e

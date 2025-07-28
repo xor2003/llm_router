@@ -8,7 +8,7 @@ from app.state import ModelStateManager
 
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
-    """Зависимость для получения конфигурации."""
+    """Dependency for getting configuration."""
     return load_config("config.yaml")
 
 
@@ -32,18 +32,18 @@ def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
 
 @lru_cache(maxsize=1)
 def get_state_manager() -> ModelStateManager:
-    """Зависимость для получения менеджера состояний."""
+    """Dependency for getting state manager."""
     config = get_config()
-    # Инициализируем с backend_model_id из конфигурации
+    # Initialize with backend_model_id from configuration
     return ModelStateManager()
 
 
 @lru_cache(maxsize=1)
 def get_router() -> LLMRouter:
-    """Зависимость для получения роутера."""
+    """Dependency for getting router."""
     config = get_config()
     state_manager = get_state_manager()
-    return LLMRouter(config.model_list, state_manager, config.router_settings)
+    return LLMRouter(config)
 
 
 @lru_cache(maxsize=1)
