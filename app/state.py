@@ -50,10 +50,11 @@ class ModelStateManager:
                 )
                 return False
 
-        # Implement basic rate limiting
-        time_since_last_use = current_time - state.last_used
-        if time_since_last_use < 0.1:  # 100ms minimum between requests
-            return False
+        # Implement basic rate limiting - only apply if there was a previous request
+        if state.last_used > 0:
+            time_since_last_use = current_time - state.last_used
+            if time_since_last_use < 0.1:  # 100ms minimum between requests
+                return False
 
         return True
 
@@ -74,14 +75,12 @@ class ModelStateManager:
 
         # For rate limit errors, set cooldown
         if status_code == 429:
-            self.set_cooldown(backend_model_id, 60)  # Default 60s cooldown
+            self.set_cooldown(backend_model_id, time.time() + 60)  # 60s cooldown
 
     def set_cooldown(self, backend_model_id: str, reset_time: float):
         """Set cooldown until specified reset time"""
         state = self._get_state(backend_model_id)
         current_time = time.time()
-
-        # Calculate duration until reset time
         duration = max(reset_time - current_time, 1)  # At least 1 second
 
         state.is_on_cooldown = True

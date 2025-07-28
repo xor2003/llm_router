@@ -30,14 +30,25 @@ class BaseGenerativeClient(ABC):
 
 class GeminiClient(BaseGenerativeClient):
     def __init__(self, model_id: str, model_name: str, api_key: str):
-        import google.generativeai as genai
+        from google.generativeai import client
 
         self.logger = logging.getLogger(f"{self.__class__.__name__}[{model_id}]")
         self.model_id = model_id
 
+        # Configure API key
+        import google.generativeai as genai
         genai.configure(api_key=api_key)
-        self.client = genai.GenerativeModel(model_name)
-        self.model_name = model_name
+        
+        # Get the generative client
+        self.client = client.get_default_generative_client()
+        
+        # Format model name according to API requirements
+        formatted_model_name = f"models/{model_name}" if not model_name.startswith("models/") else model_name
+        self.logger.debug(
+            f"Sending to Gemini model `{formatted_model_name}`\n"
+        )
+        self.model_name = formatted_model_name
+        self.model = genai.GenerativeModel(formatted_model_name)
 
     def _translate_payload_to_gemini(self, payload: Dict[str, Any]) -> list[Dict]:
         contents = []
@@ -77,7 +88,11 @@ class GeminiClient(BaseGenerativeClient):
 
     async def generate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         contents = self._translate_payload_to_gemini(payload)
-        response = await self.client.generate_content_async(contents)
+        self.logger.debug(
+            f'Sending to Gemini model: "{self.model_name}"\n'
+            f"Contents: {json.dumps(contents, indent=2)}"
+        )
+        response = self.model.generate_content(contents)
         return {
             "id": f"chatcmpl-{time.time()}",
             "object": "chat.completion",
@@ -98,9 +113,16 @@ class GeminiClient(BaseGenerativeClient):
         payload: Dict[str, Any],
     ) -> AsyncGenerator[Dict[str, Any], None]:
         contents = self._translate_payload_to_gemini(payload)
-        stream = await self.client.generate_content_async(contents, stream=True)
+        
+        # Log the actual request being sent to Gemini with arguments
+        self.logger.debug(
+            f"Sending to Gemini model {self.model_name} with arguments:\n"
+            f"Contents: {json.dumps(contents, indent=2)}\n"
+            f"Stream: True"
+        )
+        stream = self.model.generate_content(contents, stream=True)
 
-        async for chunk in stream:
+        for chunk in stream:
             if not chunk.parts:
                 self.logger.debug(
                     f"Ignoring empty/metadata chunk from Gemini stream. Finish reason: {chunk.candidates[0].finish_reason}",
@@ -116,7 +138,7 @@ class OpenAIClient(BaseGenerativeClient):
         self.logger = logging.getLogger(f"{self.__class__.__name__}[{model_id}]")
 
         if model_name.startswith("openrouter/"):
-            model_name = model_name[len("openrouter/") :]
+            model_name = model_name[len("openrouter/"):]
         self.model_name = model_name
         self.client = AsyncOpenAI(api_key=api_key, base_url=api_base)
 
@@ -134,7 +156,7 @@ class OpenAIClient(BaseGenerativeClient):
         payload_copy["model"] = self.model_name
         payload_copy["stream"] = True
         stream = await self.client.chat.completions.create(**payload_copy)
-        async for chunk in stream:
+        for chunk in stream:
             yield chunk.model_dump()
 
 

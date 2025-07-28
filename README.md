@@ -28,7 +28,7 @@ Create `config.yaml` with your model configurations:
 model_list:
   - id: "gemini-1"
     group_name: "creative"
-    model_name: "gemini/gemini-1.5-pro-latest"
+    model_name: "gemini/gemini-2.5-pro"
     api_key: ${GEMINI_API_KEY}
     provider: "gemini"
 

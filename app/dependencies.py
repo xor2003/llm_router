@@ -42,7 +42,7 @@ def get_state_manager() -> ModelStateManager:
 def get_router() -> LLMRouter:
     """Dependency for getting router."""
     config = get_config()
-    state_manager = get_state_manager()
+
     return LLMRouter(config)
 
 
