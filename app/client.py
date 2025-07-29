@@ -164,8 +164,12 @@ class OpenAIClient(BaseGenerativeClient):
         payload_copy = payload.copy()
         payload_copy["model"] = self.model_name
         payload_copy["stream"] = True
-        stream = await self.client.chat.completions.create(**payload_copy)
-        for chunk in stream:
+        stream = self.client.chat.completions.create(**payload_copy)
+        # Handle both async generators and coroutines
+        if hasattr(stream, '__await__'):
+            # It's a coroutine, await to get the async generator
+            stream = await stream
+        async for chunk in stream:
             yield chunk.model_dump()
 
 

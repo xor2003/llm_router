@@ -7,10 +7,11 @@ import time
 from typing import Any
 
 import openai
+import sentry_sdk
 import uvicorn
 from cachetools import TTLCache
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from httpx import HTTPStatusError
 
 from app.client import CustomRateLimitException, LLMClient
@@ -19,6 +20,15 @@ from app.dependencies import get_client_map, get_config, get_router, get_state_m
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
 from app.router import LLMRouter
 from app.state import ModelStateManager
+
+# Initialize Sentry for error tracking
+sentry_dsn = os.getenv("SENTRY_DSN")
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        # Set traces_sample_rate to 1.0 to capture 100% of transactions
+        traces_sample_rate=1.0,
+    )
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -153,12 +163,14 @@ def _handle_rate_limit_error(
 ) -> None:
     """Handles rate limit errors."""
     status_code = 0
+    error_message = str(e)
+
     if isinstance(e, openai.RateLimitError):
         status_code = 429
     elif isinstance(e, HTTPStatusError):
         status_code = e.response.status_code
 
-    state_manager.record_failure(backend_model_id, status_code)
+    state_manager.record_failure(backend_model_id, status_code, error_message)
 
     if isinstance(e, HTTPStatusError) and status_code == 400:
         logger.error(
@@ -266,6 +278,73 @@ async def list_models(config: AppConfig = Depends(get_config)):
     return {"models": model_names}
 
 
+@app.get("/dashboard", response_class=HTMLResponse)
+async def model_dashboard(state_manager: ModelStateManager = Depends(get_state_manager)):
+    """Endpoint to display model status dashboard"""
+    html_content = """
+    <html>
+    <head>
+        <title>LLM Model Dashboard</title>
+        <style>
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+            tr:nth-child(even) { background-color: #f9f9f9; }
+            .available { background-color: #d4edda; }
+            .cooldown { background-color: #fff3cd; }
+            .unavailable { background-color: #f8d7da; }
+        </style>
+    </head>
+    <body>
+        <h1>LLM Model Status Dashboard</h1>
+        <table>
+            <tr>
+                <th>Model ID</th>
+                <th>Status</th>
+                <th>Last Used</th>
+                <th>Cooldown Until</th>
+                <th>Failure Count</th>
+                <th>Last Error</th>
+                <th>Error Timestamp</th>
+            </tr>
+    """
+
+    for model_id, state in state_manager.states.items():
+        # Determine status based on current state
+        status = "Available"
+        status_class = "available"
+        if state.is_on_cooldown:
+            status = "Rate Limited" if time.time() < state.cooldown_until else "Available"
+            status_class = "cooldown" if time.time() < state.cooldown_until else "available"
+        elif state.failure_count > 0:
+            status = "Unavailable"
+            status_class = "unavailable"
+
+        # Format timestamps
+        last_used = time.ctime(state.last_used) if state.last_used else "Never"
+        cooldown_until = time.ctime(state.cooldown_until) if state.cooldown_until else "N/A"
+        error_timestamp = time.ctime(state.last_error_timestamp) if state.last_error_timestamp else "N/A"
+
+        html_content += f"""
+            <tr class="{status_class}">
+                <td>{model_id}</td>
+                <td>{status}</td>
+                <td>{last_used}</td>
+                <td>{cooldown_until}</td>
+                <td>{state.failure_count}</td>
+                <td>{state.last_error or 'None'}</td>
+                <td>{error_timestamp}</td>
+            </tr>
+        """
+
+    html_content += """
+        </table>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+
 @app.post("/v1/chat/completions")
 @app.post("/chat_completions")
 async def chat_completions(
@@ -305,6 +384,9 @@ async def chat_completions(
 
     except Exception as e:
         logger.exception("Internal server error occurred")
+        # Capture exception to Sentry
+        if sentry_dsn:
+            sentry_sdk.capture_exception(e)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

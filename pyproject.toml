@@ -16,7 +16,8 @@ dependencies = [
     "google-genai",
     "cachetools",
     "pytest-asyncio",
-    "pytest-cov"
+    "pytest-cov",
+    "sentry-sdk"
 ]
 
 [build-system]

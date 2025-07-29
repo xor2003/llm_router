@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.config import BackendModel
 from app.dependencies import get_client_map, get_router
 from main import app
+from app.state import AvailabilityChecker, StateUpdater, ModelStateManager
 
 
 # Mock the dependencies
@@ -46,6 +47,11 @@ def test_tool_call_with_workaround(client, mock_unsupported_model):
     mock_router = MagicMock()
     mock_router.model_groups = {"test-group": [mock_unsupported_model]}
     mock_router.get_active_or_failover_model.return_value = mock_unsupported_model
+
+    # Initialize state manager with dependencies
+    availability_checker = AvailabilityChecker()
+    state_updater = StateUpdater()
+    state_manager = ModelStateManager(availability_checker, state_updater)
 
     # --- CHANGE #1: Mock must return ASYNC GENERATOR ---
     # Our code now expects a stream (generator), not a simple object.
@@ -99,6 +105,11 @@ def test_tool_call_native_passthrough(client, mock_supported_model):
     mock_router = MagicMock()
     mock_router.model_groups = {"test-group": [mock_supported_model]}
     mock_router.get_active_or_failover_model.return_value = mock_supported_model
+
+    # Initialize state manager with dependencies
+    availability_checker = AvailabilityChecker()
+    state_updater = StateUpdater()
+    state_manager = ModelStateManager(availability_checker, state_updater)
 
     # --- CHANGE #3: Mock must return DICT, not MagicMock ---
     # This fixes `TypeError: Object of type MagicMock is not JSON serializable`

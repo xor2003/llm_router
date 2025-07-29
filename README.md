@@ -7,6 +7,19 @@
 
 A FastAPI-based proxy server that intelligently routes requests to various LLM providers (OpenAI, Gemini) with failover handling, rate limiting, and tool call support.
 
+## Error Tracking with Sentry
+
+The application is configured to send exceptions to Sentry for monitoring. To enable this feature:
+
+1. Sign up for a Sentry account at [sentry.io](https://sentry.io)
+2. Create a new project and get the DSN
+3. Set the DSN as an environment variable:
+```bash
+export SENTRY_DSN="your_dsn_here"
+```
+
+The application will automatically capture and report all unhandled exceptions to Sentry.
+
 ## Features
 - **Model Routing**: Routes requests to backend models with automatic failover
 - **Rate Limiting**: Handles provider rate limits with cooldown tracking

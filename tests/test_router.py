@@ -3,6 +3,7 @@ import pytest
 from app.config import AppConfig, BackendModel
 from app.router import LLMRouter
 from app.state import ModelStateManager
+from app.utils.model_grouper import ModelGrouper
 
 
 @pytest.fixture
@@ -38,14 +39,19 @@ def mock_app_config():
 
 
 def test_router_initialization(mock_app_config):
-    router = LLMRouter(mock_app_config)
+    model_grouper = ModelGrouper()
+    router = LLMRouter(mock_app_config, model_grouper)
     assert "group1" in router.model_groups
     assert len(router.model_groups["group1"]) == 2
 
 
 def test_get_active_model(mock_app_config):
-    state_manager = ModelStateManager()
-    router = LLMRouter(mock_app_config)
+    from app.state import AvailabilityChecker, StateUpdater
+    availability_checker = AvailabilityChecker()
+    state_updater = StateUpdater()
+    state_manager = ModelStateManager(availability_checker, state_updater)
+    model_grouper = ModelGrouper()
+    router = LLMRouter(mock_app_config, model_grouper)
 
     # Should get first model initially
     model = router.get_active_or_failover_model("group1", state_manager)

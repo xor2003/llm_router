@@ -3,42 +3,30 @@ import logging
 
 from app.config import AppConfig, BackendModel
 from app.state import ModelStateManager
+from app.utils.model_grouper import ModelGrouper
 
 logger = logging.getLogger(__name__)
 
 
 class LLMRouter:
-    def __init__(self, config: AppConfig):
-        self.model_groups: dict[str, list[BackendModel]] = {}
-        self.model_map: dict[str, BackendModel] = {}
-        self.group_counters: dict[str, int] = {}
-
-        # --- START CHANGES ---
-        # Dictionary to store current active model ID for each group
-        self.active_model_ids: dict[str, str | None] = {}
-        # --- END CHANGES ---
-
-        self._build_groups(config.model_list)
-        logger.info(f"Initialized groups: {list(self.model_groups.keys())}")
-
-    def _build_groups(self, model_list: list[BackendModel]) -> None:
-        for model in model_list:
+    def __init__(self, config: AppConfig, model_grouper: ModelGrouper):
+        # Validate and filter models before building groups
+        valid_models = []
+        for model in config.model_list:
             if not all([model.id, model.group_name, model.model_name]):
                 logger.error(
                     f"Model parameter missing for group {model.group_name}. Skipping.",
                 )
                 continue
+            valid_models.append(model)
 
-            self.model_map[model.id] = model
-            if model.group_name not in self.model_groups:
-                self.model_groups[model.group_name] = []
-                # Initialize active model for new group as None
-                self.active_model_ids[model.group_name] = None
-            self.model_groups[model.group_name].append(model)
-
-        for group_name in self.model_groups:
-            self.group_counters[group_name] = 0
-            logger.info(f"Initialized counter for group: {group_name}")
+        (
+            self.model_groups,
+            self.model_map,
+            self.group_counters,
+            self.active_model_ids,
+        ) = model_grouper.build_groups(valid_models)
+        logger.info(f"Initialized groups: {list(self.model_groups.keys())}")
 
     def get_model_by_id(self, model_id: str) -> BackendModel | None:
         """Returns BackendModel object by its unique ID."""

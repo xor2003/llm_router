@@ -3,8 +3,8 @@ from functools import lru_cache
 from app.client import GeminiClient, LLMClient, OpenAIClient
 from app.config import AppConfig, BackendModel, load_config
 from app.router import LLMRouter
-from app.state import ModelStateManager
-
+from app.state import ModelStateManager, AvailabilityChecker, StateUpdater
+from app.utils.model_grouper import ModelGrouper
 
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:
@@ -35,16 +35,17 @@ def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
 @lru_cache(maxsize=1)
 def get_state_manager() -> ModelStateManager:
     """Dependency for getting state manager."""
-    # Initialize with backend_model_id from configuration
-    return ModelStateManager()
+    availability_checker = AvailabilityChecker()
+    state_updater = StateUpdater()
+    return ModelStateManager(availability_checker, state_updater)
 
 
 @lru_cache(maxsize=1)
 def get_router() -> LLMRouter:
     """Dependency for getting router."""
     config = get_config()
-
-    return LLMRouter(config)
+    grouper = ModelGrouper()
+    return LLMRouter(config, grouper)
 
 
 @lru_cache(maxsize=1)
