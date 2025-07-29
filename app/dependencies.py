@@ -62,6 +62,4 @@ def get_router() -> LLMRouter:
 def get_client_map() -> dict[str, LLMClient]:
     config = get_config()
     router = get_router()
-    return {
-        model.id: get_llm_client(model, router, config) for model in config.model_list
-    }
+    return {model.id: get_llm_client(model, router, config) for model in config.model_list}

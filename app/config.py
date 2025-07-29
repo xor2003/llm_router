@@ -2,7 +2,7 @@ import logging
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -83,10 +83,7 @@ class EnvSettings(BaseSettings):
     OPENROUTER_KEY9: str = ""
     OPENROUTER_KEY10: str = ""
 
-    model_config = ConfigDict(
-        env_file=".env",
-        extra="ignore"
-    )
+    model_config = ConfigDict(env_file=".env", extra="ignore")
 
 
 env_settings = EnvSettings()

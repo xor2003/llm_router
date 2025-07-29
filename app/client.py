@@ -10,8 +10,8 @@ import google.api_core.exceptions
 from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 from app.config import BackendModel
-from app.router import LLMRouter
 from app.pii import PIIScrubber
+from app.router import LLMRouter
 
 
 class BaseGenerativeClient(ABC):
@@ -198,7 +198,7 @@ class LLMClient:
 
     async def make_request(self, payload: dict[str, Any]) -> Any:
         self.logger.info(f"Making request to backend model: {self.model_name}")
-        
+
         if self.pii_scrubber:
             scrubbed_payload, pii_map = self.pii_scrubber.scrub(payload)
             self.logger.debug(f"Request payload (scrubbed): {scrubbed_payload}")
@@ -213,9 +213,9 @@ class LLMClient:
             if stream:
                 # PII restoration for streaming responses will be handled in a future iteration.
                 return self.generative_client.generate_stream(scrubbed_payload)
-            
+
             response = await self.generative_client.generate(scrubbed_payload)
-            
+
             if self.pii_scrubber:
                 return self.pii_scrubber.restore(response, pii_map)
             return response

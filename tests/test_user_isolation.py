@@ -1,8 +1,7 @@
-"""
-Tests to verify that requests from different users don't mix contexts.
+"""Tests to verify that requests from different users don't mix contexts.
 Each model should only see the context of one user at a time.
 """
-import json
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,17 +39,17 @@ def test_user_context_isolation(client, mock_backend_model):
 
     # Mock LLM client to capture requests
     mock_llm_client = MagicMock()
-    
+
     # Track all requests made to the model
     requests_made = []
-    
+
     async def mock_make_request(payload):
         requests_made.append(payload.copy())  # Store a copy of the payload
         return {
             "choices": [{"message": {"content": "response"}}],
             "model": mock_backend_model.model_name,
         }
-    
+
     mock_llm_client.make_request = AsyncMock(side_effect=mock_make_request)
     client_map = {mock_backend_model.id: mock_llm_client}
 
@@ -63,8 +62,8 @@ def test_user_context_isolation(client, mock_backend_model):
         "messages": [
             {"role": "user", "content": "Hello, I'm User A"},
             {"role": "assistant", "content": "Hello User A, how can I help?"},
-            {"role": "user", "content": "What's my name?"}
-        ]
+            {"role": "user", "content": "What's my name?"},
+        ],
     }
 
     # Simulate requests from User B
@@ -73,8 +72,8 @@ def test_user_context_isolation(client, mock_backend_model):
         "messages": [
             {"role": "user", "content": "Hi, I'm User B"},
             {"role": "assistant", "content": "Hello User B, nice to meet you"},
-            {"role": "user", "content": "What's my name?"}
-        ]
+            {"role": "user", "content": "What's my name?"},
+        ],
     }
 
     # Send requests from both users
@@ -87,7 +86,7 @@ def test_user_context_isolation(client, mock_backend_model):
 
     # Verify that each request contains only its own context
     assert len(requests_made) == 2
-    
+
     # User A's request should only contain User A's context
     user_a_request = requests_made[0]
     user_a_messages = user_a_request["messages"]
@@ -113,14 +112,14 @@ def test_concurrent_user_requests(client, mock_backend_model):
     # Mock LLM client
     mock_llm_client = MagicMock()
     requests_made = []
-    
+
     async def mock_make_request(payload):
         requests_made.append(payload.copy())
         return {
             "choices": [{"message": {"content": "response"}}],
             "model": mock_backend_model.model_name,
         }
-    
+
     mock_llm_client.make_request = AsyncMock(side_effect=mock_make_request)
     client_map = {mock_backend_model.id: mock_llm_client}
 
@@ -134,8 +133,8 @@ def test_concurrent_user_requests(client, mock_backend_model):
             "messages": [
                 {"role": "user", "content": f"User {i} message 1"},
                 {"role": "assistant", "content": f"Response to user {i}"},
-                {"role": "user", "content": f"User {i} follow-up"}
-            ]
+                {"role": "user", "content": f"User {i} follow-up"},
+            ],
         }
         for i in range(5)
     ]
@@ -152,7 +151,7 @@ def test_concurrent_user_requests(client, mock_backend_model):
 
     # Verify each request has its own isolated context
     assert len(requests_made) == 5
-    
+
     for i, request in enumerate(requests_made):
         messages = request["messages"]
         # Each request should only contain its own user context
@@ -172,14 +171,14 @@ def test_streaming_user_isolation(client, mock_backend_model):
     # Mock LLM client for streaming
     mock_llm_client = MagicMock()
     requests_made = []
-    
+
     async def mock_stream_generator():
         yield {"choices": [{"delta": {"content": "streaming response"}}]}
-    
+
     async def mock_make_request(payload):
         requests_made.append(payload.copy())
         return mock_stream_generator()
-    
+
     mock_llm_client.make_request = AsyncMock(side_effect=mock_make_request)
     client_map = {mock_backend_model.id: mock_llm_client}
 
@@ -190,13 +189,13 @@ def test_streaming_user_isolation(client, mock_backend_model):
     user_a_stream = {
         "model": "test-group",
         "messages": [{"role": "user", "content": "User A streaming request"}],
-        "stream": True
+        "stream": True,
     }
 
     user_b_stream = {
         "model": "test-group",
         "messages": [{"role": "user", "content": "User B streaming request"}],
-        "stream": True
+        "stream": True,
     }
 
     # Send streaming requests
@@ -209,14 +208,14 @@ def test_streaming_user_isolation(client, mock_backend_model):
 
     # Verify isolation
     assert len(requests_made) == 2
-    
+
     # Check that each request has its own context
     user_a_request = requests_made[0]
     user_b_request = requests_made[1]
-    
+
     assert "User A streaming request" in str(user_a_request["messages"])
     assert "User B streaming request" in str(user_b_request["messages"])
-    
+
     # Ensure no mixing
     assert "User A" not in str(user_b_request["messages"])
     assert "User B" not in str(user_a_request["messages"])

@@ -26,18 +26,19 @@ async def test_rate_limiting_exception():
 
     # Create LLMClient
     from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+
     config = AppConfig(
         proxy_server_config=ProxyServerConfig(),
         model_list=[],
         router_settings=RouterSettings(),
         mcp_tool_use_prompt_template="",
-        pii_config=PIIConfig()
+        pii_config=PIIConfig(),
     )
     client = LLMClient(
         generative_client=mock_generative_client,
         backend_model=backend_model,
         router=mock_router,
-        pii_config=config.pii_config
+        pii_config=config.pii_config,
     )
 
     # Mock the generative client to raise CustomRateLimitException

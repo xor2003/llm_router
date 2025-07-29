@@ -29,12 +29,13 @@ def mock_router():
 async def test_gemini_xml_translation(mock_gemini_backend_model, mock_router):
     """Verify Gemini handles XML responses correctly."""
     from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+
     config = AppConfig(
         proxy_server_config=ProxyServerConfig(),
         model_list=[],
         router_settings=RouterSettings(),
         mcp_tool_use_prompt_template="",
-        pii_config=PIIConfig()
+        pii_config=PIIConfig(),
     )
     llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
     xml_response = "<response><message>Test XML</message></response>"
@@ -59,12 +60,13 @@ async def test_gemini_xml_translation(mock_gemini_backend_model, mock_router):
 async def test_gemini_streaming(mock_gemini_backend_model, mock_router):
     """Verify streaming requests for Gemini client."""
     from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+
     config = AppConfig(
         proxy_server_config=ProxyServerConfig(),
         model_list=[],
         router_settings=RouterSettings(),
         mcp_tool_use_prompt_template="",
-        pii_config=PIIConfig()
+        pii_config=PIIConfig(),
     )
     llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
     mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
@@ -91,12 +93,13 @@ async def test_gemini_streaming(mock_gemini_backend_model, mock_router):
 async def test_gemini_error_handling(mock_gemini_backend_model, mock_router):
     """Verify Gemini client handles API errors correctly."""
     from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+
     config = AppConfig(
         proxy_server_config=ProxyServerConfig(),
         model_list=[],
         router_settings=RouterSettings(),
         mcp_tool_use_prompt_template="",
-        pii_config=PIIConfig()
+        pii_config=PIIConfig(),
     )
     llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
 
