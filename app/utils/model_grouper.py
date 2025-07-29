@@ -5,7 +5,8 @@ from app.config import BackendModel
 
 class ModelGrouper:
     def build_groups(
-        self, model_list: list[BackendModel]
+        self,
+        model_list: list[BackendModel],
     ) -> tuple[dict[str, list[BackendModel]], dict[str, BackendModel], dict[str, int], dict[str, str | None]]:
         model_groups: dict[str, list[BackendModel]] = {}
         model_map: dict[str, BackendModel] = {}

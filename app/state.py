@@ -59,7 +59,11 @@ class StateUpdater:
         self.logger.info("Recorded success for model")
 
     def record_failure(
-        self, state: ModelState, status_code: int, error_message: str | None, current_time: float
+        self,
+        state: ModelState,
+        status_code: int,
+        error_message: str | None,
+        current_time: float,
     ) -> None:
         """Record a failed request to a backend_model."""
         state.failure_count += 1

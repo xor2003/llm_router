@@ -166,7 +166,7 @@ class OpenAIClient(BaseGenerativeClient):
         payload_copy["stream"] = True
         stream = self.client.chat.completions.create(**payload_copy)
         # Handle both async generators and coroutines
-        if hasattr(stream, '__await__'):
+        if hasattr(stream, "__await__"):
             # It's a coroutine, await to get the async generator
             stream = await stream
         async for chunk in stream:

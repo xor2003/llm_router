@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.config import BackendModel
 from app.dependencies import get_client_map, get_router
+from app.state import AvailabilityChecker, ModelStateManager, StateUpdater
 from main import app
-from app.state import AvailabilityChecker, StateUpdater, ModelStateManager
 
 
 # Mock the dependencies

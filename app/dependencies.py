@@ -3,8 +3,9 @@ from functools import lru_cache
 from app.client import GeminiClient, LLMClient, OpenAIClient
 from app.config import AppConfig, BackendModel, load_config
 from app.router import LLMRouter
-from app.state import ModelStateManager, AvailabilityChecker, StateUpdater
+from app.state import AvailabilityChecker, ModelStateManager, StateUpdater
 from app.utils.model_grouper import ModelGrouper
+
 
 @lru_cache(maxsize=1)
 def get_config() -> AppConfig:

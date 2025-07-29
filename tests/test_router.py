@@ -47,6 +47,7 @@ def test_router_initialization(mock_app_config):
 
 def test_get_active_model(mock_app_config):
     from app.state import AvailabilityChecker, StateUpdater
+
     availability_checker = AvailabilityChecker()
     state_updater = StateUpdater()
     state_manager = ModelStateManager(availability_checker, state_updater)
