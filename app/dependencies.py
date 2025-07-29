@@ -13,7 +13,11 @@ def get_config() -> AppConfig:
     return load_config("config.yaml")
 
 
-def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
+def get_llm_client(
+    backend_model: BackendModel,
+    router: LLMRouter,
+    config: AppConfig,
+) -> LLMClient:
     """Factory function to create the appropriate LLMClient."""
     if backend_model.provider == "gemini":
         generative_client: GeminiClient | OpenAIClient = GeminiClient(
@@ -30,7 +34,12 @@ def get_llm_client(backend_model: BackendModel, router: LLMRouter) -> LLMClient:
             api_key=backend_model.api_key,
             api_base=backend_model.api_base,
         )
-    return LLMClient(generative_client, backend_model, router)
+    return LLMClient(
+        generative_client=generative_client,
+        backend_model=backend_model,
+        router=router,
+        pii_config=config.pii_config,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -52,4 +61,7 @@ def get_router() -> LLMRouter:
 @lru_cache(maxsize=1)
 def get_client_map() -> dict[str, LLMClient]:
     config = get_config()
-    return {model.id: get_llm_client(model, get_router()) for model in config.model_list}
+    router = get_router()
+    return {
+        model.id: get_llm_client(model, router, config) for model in config.model_list
+    }

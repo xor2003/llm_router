@@ -28,7 +28,15 @@ def mock_router():
 @pytest.mark.asyncio
 async def test_gemini_xml_translation(mock_gemini_backend_model, mock_router):
     """Verify Gemini handles XML responses correctly."""
-    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
+    from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+    config = AppConfig(
+        proxy_server_config=ProxyServerConfig(),
+        model_list=[],
+        router_settings=RouterSettings(),
+        mcp_tool_use_prompt_template="",
+        pii_config=PIIConfig()
+    )
+    llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
     xml_response = "<response><message>Test XML</message></response>"
     mock_response = {"choices": [{"message": {"content": xml_response}}]}
 
@@ -50,7 +58,15 @@ async def test_gemini_xml_translation(mock_gemini_backend_model, mock_router):
 @pytest.mark.asyncio
 async def test_gemini_streaming(mock_gemini_backend_model, mock_router):
     """Verify streaming requests for Gemini client."""
-    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
+    from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+    config = AppConfig(
+        proxy_server_config=ProxyServerConfig(),
+        model_list=[],
+        router_settings=RouterSettings(),
+        mcp_tool_use_prompt_template="",
+        pii_config=PIIConfig()
+    )
+    llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
     mock_chunks = [{"content": "chunk1"}, {"content": "chunk2"}]
 
     async def async_gen():
@@ -74,7 +90,15 @@ async def test_gemini_streaming(mock_gemini_backend_model, mock_router):
 @pytest.mark.asyncio
 async def test_gemini_error_handling(mock_gemini_backend_model, mock_router):
     """Verify Gemini client handles API errors correctly."""
-    llm_client = get_llm_client(mock_gemini_backend_model, mock_router)
+    from app.config import AppConfig, PIIConfig, ProxyServerConfig, RouterSettings
+    config = AppConfig(
+        proxy_server_config=ProxyServerConfig(),
+        model_list=[],
+        router_settings=RouterSettings(),
+        mcp_tool_use_prompt_template="",
+        pii_config=PIIConfig()
+    )
+    llm_client = get_llm_client(mock_gemini_backend_model, mock_router, config)
 
     with patch.object(
         llm_client.generative_client,

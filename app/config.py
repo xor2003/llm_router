@@ -2,7 +2,7 @@ import logging
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, ConfigDict
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -51,11 +51,17 @@ class RouterSettings(BaseModel):
     num_retries: int = 1
 
 
+class PIIConfig(BaseModel):
+    enabled: bool = False
+    custom_patterns: dict[str, str] = {}
+
+
 class AppConfig(BaseModel):
     proxy_server_config: ProxyServerConfig
     model_list: list[BackendModel]
     router_settings: RouterSettings
     mcp_tool_use_prompt_template: str
+    pii_config: PIIConfig = Field(default_factory=PIIConfig)
 
     # For backwards compatibility with Pydantic v1
     @classmethod
@@ -77,9 +83,10 @@ class EnvSettings(BaseSettings):
     OPENROUTER_KEY9: str = ""
     OPENROUTER_KEY10: str = ""
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
+    model_config = ConfigDict(
+        env_file=".env",
+        extra="ignore"
+    )
 
 
 env_settings = EnvSettings()

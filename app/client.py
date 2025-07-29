@@ -11,6 +11,7 @@ from openai import APIStatusError, AsyncOpenAI, RateLimitError
 
 from app.config import BackendModel
 from app.router import LLMRouter
+from app.pii import PIIScrubber
 
 
 class BaseGenerativeClient(ABC):
@@ -185,6 +186,7 @@ class LLMClient:
         generative_client: BaseGenerativeClient,
         backend_model: BackendModel,
         router: LLMRouter,
+        pii_config: Any,
     ):
         self.generative_client = generative_client
         self.backend_model = backend_model
@@ -192,16 +194,31 @@ class LLMClient:
         self.model_name = self.backend_model.model_name
         self.router = router
         self.logger = logging.getLogger(f"{self.__class__.__name__}[{self.model_id}]")
+        self.pii_scrubber = PIIScrubber(custom_patterns=pii_config.custom_patterns) if pii_config.enabled else None
 
     async def make_request(self, payload: dict[str, Any]) -> Any:
         self.logger.info(f"Making request to backend model: {self.model_name}")
-        self.logger.debug(f"Request payload: {payload}")
+        
+        if self.pii_scrubber:
+            scrubbed_payload, pii_map = self.pii_scrubber.scrub(payload)
+            self.logger.debug(f"Request payload (scrubbed): {scrubbed_payload}")
+        else:
+            scrubbed_payload = payload
+            pii_map = {}
+            self.logger.debug(f"Request payload: {scrubbed_payload}")
+
         stream = payload.get("stream", False)
 
         try:
             if stream:
-                return self.generative_client.generate_stream(payload)
-            return await self.generative_client.generate(payload)
+                # PII restoration for streaming responses will be handled in a future iteration.
+                return self.generative_client.generate_stream(scrubbed_payload)
+            
+            response = await self.generative_client.generate(scrubbed_payload)
+            
+            if self.pii_scrubber:
+                return self.pii_scrubber.restore(response, pii_map)
+            return response
         # --- START CHANGES ---
         except RateLimitError as e:
             # Explicitly catch OpenAI error and pass to our handler
