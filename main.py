@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import json
-import logging
 import os
 import sys
 import time
 from typing import Any
 
 import openai
-import sentry_sdk
 import uvicorn
 from cachetools import TTLCache
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -17,18 +15,10 @@ from httpx import HTTPStatusError
 from app.client import CustomRateLimitException, LLMClient
 from app.config import AppConfig, BackendModel
 from app.dependencies import get_client_map, get_config, get_router, get_state_manager
+from app.logger import setup_logger
 from app.prompts import generate_xml_tool_definitions, parse_xml_tool_call
 from app.router import LLMRouter
 from app.state import ModelStateManager
-
-# Initialize Sentry for error tracking
-sentry_dsn = os.getenv("SENTRY_DSN")
-if sentry_dsn:
-    sentry_sdk.init(
-        dsn=sentry_dsn,
-        # Set traces_sample_rate to 1.0 to capture 100% of transactions
-        traces_sample_rate=1.0,
-    )
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -36,12 +26,7 @@ sys.path.insert(0, project_root)
 sys.path.insert(0, os.path.join(project_root, "app"))
 
 # Configure logging
-log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=log_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = setup_logger()
 
 app = FastAPI(title="LLM Proxy Server")
 recent_prompts_cache = TTLCache(maxsize=1000, ttl=2)
@@ -384,9 +369,6 @@ async def chat_completions(
 
     except Exception as e:
         logger.exception("Internal server error occurred")
-        # Capture exception to Sentry
-        if sentry_dsn:
-            sentry_sdk.capture_exception(e)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

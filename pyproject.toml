@@ -17,7 +17,7 @@ dependencies = [
     "cachetools",
     "pytest-asyncio",
     "pytest-cov",
-    "sentry-sdk"
+    "loguru"
 ]
 
 [build-system]
